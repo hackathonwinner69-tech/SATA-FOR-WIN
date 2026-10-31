@@ -208,6 +208,35 @@ test('a chore replaced under the same id does not play the old scan', async (t) 
   assert.throws(() => arcade.act('fake', 'g1', 'go'), (err) => err.status === 409);
 });
 
+test('a chore that is replaced or removed is closed, and closing the arcade lets queued moves land first', async (t) => {
+  const closed = [];
+  const named = (name) => Object.assign(fakeChore(ok), { close: async () => closed.push(name) });
+  const arcade = await arcadeWith(t, named('first'));
+  arcade.addChore(named('second'));
+  arcade.removeChore('fake');
+  arcade.removeChore('fake');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(closed, ['first', 'second']);
+
+  const order = [];
+  let release;
+  const gate = new Promise((resolve) => (release = resolve));
+  const slow = fakeChore(async (group) => {
+    await gate;
+    order.push('moved');
+    return ok(group);
+  });
+  slow.close = () => order.push('closed');
+  arcade.addChore(slow);
+  arcade.addChore(Object.assign(fakeChore(ok), { id: 'broken', close: () => Promise.reject(new Error('already gone')) }));
+  await arcade.scan('fake');
+  arcade.act('fake', 'g1', 'go');
+  const closing = arcade.close();
+  release();
+  await closing;
+  assert.deepEqual(order, ['moved', 'closed']);
+});
+
 test('a scan waits for queued moves and skips groups queued behind it', async (t) => {
   const order = [];
   let release;

@@ -4,6 +4,13 @@ import { EventEmitter } from 'node:events';
 import { Journal } from './core/journal.js';
 import { JobQueue } from './core/queue.js';
 
+/** Close a chore that is leaving the arcade; a failure to close changes nothing for the player. */
+function release(chore) {
+  Promise.resolve()
+    .then(() => chore.close?.())
+    .catch(() => {});
+}
+
 export class Arcade extends EventEmitter {
   constructor({ chores, journalFile, mode, advisor = null }) {
     super();
@@ -23,6 +30,8 @@ export class Arcade extends EventEmitter {
 
   /** Add a chore after start-up, e.g. once a Google account is connected. */
   addChore(chore) {
+    const old = this.chores.get(chore.id);
+    if (old && old !== chore) release(old);
     // A chore replaced under the same id (Gmail after signing in again) must not play the old one's scan.
     this.scans.delete(chore.id);
     this.backlog.delete(chore.id);
@@ -32,10 +41,19 @@ export class Arcade extends EventEmitter {
   }
 
   removeChore(id) {
-    if (!this.chores.delete(id)) return;
+    const chore = this.chores.get(id);
+    if (!chore) return;
+    this.chores.delete(id);
+    release(chore);
     this.scans.delete(id);
     this.backlog.delete(id);
     this.emit('event', { type: 'state', state: this.summary() });
+  }
+
+  /** Let queued moves finish, then close every chore's connections. */
+  async close() {
+    await this.queue.drain();
+    await Promise.allSettled([...this.chores.values()].map((c) => c.close?.()));
   }
 
   chore(id) {
