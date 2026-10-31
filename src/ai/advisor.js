@@ -1,11 +1,13 @@
 // Optional Claude advisor (--ai). When the heuristics have no idea where a
 // pack of files belongs or what a merchant is, Claude makes the suggestion the
 // game highlights. It only ever suggests: the player still makes every move.
-// Only labels, names and short samples are sent; never file contents or bodies.
+// Only each group's id, label and count are sent (plus the total for
+// merchants); never file contents, addresses, samples or bodies.
 import Anthropic from '@anthropic-ai/sdk';
 
 const MODEL = 'claude-opus-5-5';
 const BATCH = 60;
+const CACHE_MAX = 5000;
 
 const TASKS = {
   files: {
@@ -15,12 +17,22 @@ const TASKS = {
   },
   expenses: {
     pick: (g) => !g.suggestion,
+    item: (g) => ({ id: g.id, label: g.label, count: g.count, total: g.total }),
     question:
       'Each item is a merchant from a bank export, with its transaction count and total (negative is money spent). Pick the spending category. Answer "flag" for transfers to people or anything you cannot identify.',
   },
 };
 
-export function createAdvisor({ client = new Anthropic(), log = console } = {}) {
+const baseItem = (g) => ({ id: g.id, label: g.label, count: g.count });
+
+export function createAdvisor({ client = new Anthropic({ timeout: 30_000, maxRetries: 1 }), log = console } = {}) {
+  // A rescan sees the same groups again; their advice is already paid for.
+  const cache = new Map();
+  const remember = (key, choice) => {
+    if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
+    cache.set(key, choice);
+  };
+
   async function classify(question, choices, items) {
     const schema = {
       type: 'object',
@@ -47,9 +59,9 @@ export function createAdvisor({ client = new Anthropic(), log = console } = {}) 
       output_config: { effort: 'low', format: { type: 'json_schema', schema } },
       messages: [{ role: 'user', content: `${question}\n\nItems:\n${JSON.stringify(items, null, 1)}` }],
     });
-    if (response.stop_reason === 'refusal') return [];
+    if (response.stop_reason === 'refusal') return null;
     const text = response.content.find((b) => b.type === 'text')?.text;
-    return text ? JSON.parse(text).answers : [];
+    return text ? JSON.parse(text).answers : null;
   }
 
   return {
@@ -57,20 +69,32 @@ export function createAdvisor({ client = new Anthropic(), log = console } = {}) 
     async advise(chore, groups) {
       const task = TASKS[chore.id];
       if (!task) return 0;
-      const open = groups.filter(task.pick);
-      if (!open.length) return 0;
       const choices = chore.actions.map((a) => a.id);
+      const keyOf = (g) => JSON.stringify([chore.id, choices, g.id, g.label]);
       let advised = 0;
+      const suggest = (group, choice) => {
+        group.suggestion = choice;
+        group.aiSuggested = true;
+        advised++;
+      };
+      const open = [];
+      for (const group of groups.filter(task.pick)) {
+        const key = keyOf(group);
+        if (!cache.has(key)) open.push(group);
+        else if (cache.get(key)) suggest(group, cache.get(key));
+      }
+      const item = task.item ?? baseItem;
       for (let i = 0; i < open.length; i += BATCH) {
         const batch = open.slice(i, i + BATCH);
-        const items = batch.map((g) => ({ id: g.id, label: g.label, detail: g.detail, count: g.count, total: g.total }));
         try {
-          for (const { id, choice } of await classify(task.question, choices, items)) {
-            const group = batch.find((g) => g.id === id);
-            if (!group || !choices.includes(choice)) continue;
-            group.suggestion = choice;
-            group.aiSuggested = true;
-            advised++;
+          const answers = await classify(task.question, choices, batch.map(item));
+          if (!answers) continue;
+          const byId = new Map(answers.map((a) => [a.id, a.choice]));
+          for (const group of batch) {
+            const choice = choices.includes(byId.get(group.id)) ? byId.get(group.id) : null;
+            // No answer is remembered too: asking again about the same group would get the same shrug.
+            remember(keyOf(group), choice);
+            if (choice) suggest(group, choice);
           }
         } catch (err) {
           // The game works without advice; say why once and carry on.
