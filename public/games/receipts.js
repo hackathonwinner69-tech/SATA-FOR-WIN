@@ -1,249 +1,302 @@
-// Receipt Rush. Merchant cards arrive against the clock; filing one files
-// every transaction from that merchant, and the budget on the right is the
-// real report being written as you play.
-import { esc, intro, keyboard, results } from './kit.js';
+// Receipt Rush. A lane runner down the checkout aisle. Each merchant arrives as
+// a wave of three gates: ChoreCade's guess, another category, and Flag. Run
+// through one and every charge from that merchant is filed there for real.
+// Shopping carts between waves cost hearts; jumping skips a merchant for later.
+import { Fx, intro, keyboard, loop, makeCanvas, reducedMotion, results, roundRect, truncate } from './kit.js';
+import { gatesFor, laneX, project, runScore } from './lanes.js';
+import { drawSprite } from '../js/sprites.js';
 import { fmt } from '../js/api.js';
 
-const STYLE = `
-.rr { position:absolute; inset:0; display:grid; grid-template-columns:minmax(0,1fr) minmax(260px,340px); gap:18px; padding:18px; }
-.rr-main { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; min-width:0; }
-.rr-deck { position:relative; width:min(440px,100%); height:250px; }
-.rr-card { position:absolute; inset:0; background:linear-gradient(160deg,#1c2747,#0f1629); border:1px solid #2b3b63; border-radius:18px; padding:22px; display:flex; flex-direction:column; gap:8px; box-shadow:0 30px 60px -30px #000; transition:transform .25s, opacity .25s; touch-action:none; cursor:grab; user-select:none; }
-.rr-card.ghost { transform:translateY(10px) scale(.96); opacity:.5; pointer-events:none; }
-.rr-card.out-r { transform:translateX(130%) rotate(18deg); opacity:0; }
-.rr-card.out-l { transform:translateX(-130%) rotate(-18deg); opacity:0; }
-.rr-card.out-u { transform:translateY(-120%); opacity:0; }
-.rr-merchant { font:800 24px ui-monospace,Consolas,monospace; letter-spacing:.02em; word-break:break-word; }
-.rr-desc { color:#8a97b8; font:12px ui-monospace,Consolas,monospace; }
-.rr-amount { font:800 34px ui-monospace,Consolas,monospace; }
-.rr-amount.in { color:#4ade80 } .rr-amount.out { color:#fda4af }
-.rr-flags { display:flex; gap:6px; flex-wrap:wrap; }
-.rr-flags span { font-size:11px; padding:2px 8px; border-radius:999px; background:#3b0d18; color:#fda4af; border:1px solid #f43f5e55; }
-.rr-flags span.rec { background:#2e1065; color:#d8b4fe; border-color:#a855f755; }
-.rr-guess { margin-top:auto; font-size:13px; color:#8a97b8; }
-.rr-guess b { color:var(--c,#22d3ee); }
-.rr-timer { width:min(440px,100%); height:6px; background:#141d36; border-radius:99px; overflow:hidden; }
-.rr-timer i { display:block; height:100%; background:linear-gradient(90deg,#f43f5e,#fbbf24,#a3e635); transform-origin:left; }
-.rr-cats { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; width:min(640px,100%); }
-.rr-cats button { background:#0f1629; border:1px solid #22304f; border-radius:10px; padding:9px 4px; font:12px ui-monospace,Consolas,monospace; color:#e6ecff; }
-.rr-cats button:hover, .rr-cats button.sug { border-color:var(--c); box-shadow:0 0 0 1px var(--c), 0 0 16px -6px var(--c); }
-.rr-cats kbd { margin-right:4px; }
-.rr-side { background:#0f1629; border:1px solid #22304f; border-radius:14px; padding:16px; overflow:auto; }
-.rr-side h4 { margin:0 0 10px; font:700 13px ui-monospace,Consolas,monospace; color:#8a97b8; }
-.rr-row { margin:8px 0; font-size:12px; }
-.rr-row div { display:flex; justify-content:space-between; font-family:ui-monospace,Consolas,monospace; }
-.rr-row i { display:block; height:6px; border-radius:99px; background:var(--c); margin-top:4px; transition:width .3s; }
-.rr-subs { margin-top:16px; padding-top:12px; border-top:1px solid #22304f; font-size:12px; color:#d8b4fe; font-family:ui-monospace,Consolas,monospace; }
-.rr-hint { color:#8a97b8; font-size:12px; text-align:center; }
-@media (max-width: 760px) { .rr { grid-template-columns:1fr; overflow:auto; } .rr-cats { grid-template-columns:repeat(3,minmax(0,1fr)); } }
-`;
+const SPEED0 = 0.32; // depth units per second
+const HEARTS = 3;
 
 export default async function play(ctx) {
-  const { root, chore, act, setStats, exit } = ctx;
-  const style = document.createElement('style');
-  style.textContent = STYLE;
-  root.append(style);
+  const { root, chore, act, setStats, exit, announce } = ctx;
+  const { canvas, ctx: g, view, destroy: destroyCanvas } = makeCanvas(root);
+  const fx = new Fx();
+  let stopLoop = () => {};
+  let kb = null;
+
   setStats([['Scanning', 'transactions…']]);
   const scan = await ctx.scan();
-  const deck = [...scan.groups];
+  const queue = [...scan.groups];
   const cats = chore.actions.filter((a) => a.id.startsWith('cat:'));
   const colorOf = Object.fromEntries(chore.actions.map((a) => [a.id, a.color]));
+  const labelOf = Object.fromEntries(chore.actions.map((a) => [a.id, a.id === 'flag' ? 'Flag' : a.label]));
 
-  if (!deck.length) {
+  if (!queue.length) {
     results(root, { title: 'ALL FILED', lines: ['Every transaction in this export already has a category.'], stats: [], onExit: exit });
-    return () => {};
+    return () => destroyCanvas();
   }
 
   await intro(root, {
     title: 'RECEIPT RUSH',
-    story: `${scan.stats.open} unfiled transactions from ${deck.length} merchants. Each card is one merchant: file it and every charge from them is filed. Beat the clock to keep your streak. The categorised CSV, a report and next month's rules are rewritten after every card.`,
+    story: `${scan.stats.open} unfiled transactions from ${queue.length} merchants. Each merchant is a wave of three checkout gates. Pick a lane and run through its gate: every charge from that merchant is filed there (if you pick nothing, nothing is filed); the categorised CSV, the report and next month's rules rewrite themselves. Dodge the carts between waves.`,
     keys: [
-      ['Space', 'accept the suggestion (or swipe right)'],
-      ['1 … 0', 'pick a category'],
-      ['F', 'flag for review (or swipe up)'],
-      ['S', 'skip, it comes back later (or swipe left)'],
+      ['← →', 'pick a lane (or click one)'],
+      ['↓ / Enter', 'keep the lane you are in'],
+      ['Space', 'jump: skip this merchant for now, or hop a cart'],
+      ['1 … 0', 'file under any category right now'],
+      ['F', 'flag right now'],
     ],
   });
 
-  const ui = document.createElement('div');
-  ui.className = 'rr';
-  ui.innerHTML = `<div class="rr-main">
-      <div class="rr-deck"></div>
-      <div class="rr-timer"><i></i></div>
-      <div class="rr-cats">${cats.map((c) => `<button data-a="${esc(c.id)}" style="--c:${esc(c.color)}"><kbd>${esc(c.key)}</kbd>${esc(c.label)}</button>`).join('')}</div>
-      <div class="rr-hint">Swipe right = accept · up = flag · left = skip</div>
-    </div>
-    <aside class="rr-side"><h4>YOUR BUDGET, AS IT IS WRITTEN</h4><div class="rr-bars"></div><div class="rr-subs"></div></aside>`;
-  root.append(ui);
-  const deckEl = ui.querySelector('.rr-deck');
-  const timerEl = ui.querySelector('.rr-timer i');
-
-  const tally = {};
-  const subs = new Map();
+  const geo = () => ({ width: view.w, horizon: view.h * 0.3, bottom: view.h * 0.93 });
+  const runner = { lane: 1, x: 1, jump: 0 };
+  let things = []; // gates and carts: { kind, z, lane, ... }
+  let wave = null; // { group, gates, spawnedAt }
+  let speed = SPEED0;
+  let hearts = HEARTS;
   let score = 0;
   let streak = 0;
   let filed = 0;
   let skipped = 0;
-  let card = null;
-  let deadline = 0;
-  let budget = 7;
-  let raf = 0;
-  let done = false;
+  let distance = 0;
+  let over = false;
+  let hurt = 0;
+  const tally = {};
 
-  function renderSide() {
-    const entries = Object.entries(tally).sort((a, b) => a[1] - b[1]);
-    const max = Math.max(1, ...entries.map(([, v]) => Math.abs(v)));
-    ui.querySelector('.rr-bars').innerHTML =
-      entries
-        .map(
-          ([cat, v]) =>
-            `<div class="rr-row" style="--c:${esc(colorOf[`cat:${cat}`])}"><div><span>${esc(cat)}</span><span>${fmt.money(v)}</span></div><i style="width:${(Math.abs(v) / max) * 100}%"></i></div>`,
-        )
-        .join('') || '<p class="rr-hint">File a card to start your report.</p>';
-    const monthly = [...subs.values()].reduce((s, v) => s + v, 0);
-    ui.querySelector('.rr-subs').textContent = subs.size ? `🔁 ${subs.size} subscriptions found: ${fmt.money(monthly)}/mo · ${fmt.money(monthly * 12)}/yr` : '';
-  }
-
-  function cardHtml(group) {
-    const sug = group.suggestion;
-    const flags = group.flags.map((f) => `<span class="${f === 'recurring' ? 'rec' : ''}">${esc(f)}</span>`).join('');
-    return `<div class="rr-merchant">${esc(group.label)}</div>
-      <div class="rr-desc">${esc(group.detail)} · ${group.count} transaction${group.count > 1 ? 's' : ''}</div>
-      <div class="rr-amount ${group.total >= 0 ? 'in' : 'out'}">${fmt.money(group.total)}</div>
-      <div class="rr-flags">${flags}</div>
-      <div class="rr-guess" style="--c:${esc(colorOf[sug] ?? '#94a3b8')}">${sug ? `${group.aiSuggested ? 'Claude suggests' : 'ChoreCade guesses'} <b>${esc(sug === 'flag' ? 'flag for review' : sug.slice(4))}</b>${group.remembered ? ' (from your rules)' : ''}` : 'No idea what this is. Your call.'}</div>`;
-  }
-
-  function deal() {
-    deckEl.innerHTML = '';
-    if (!deck.length) return finish();
-    if (deck[1]) {
-      const ghost = document.createElement('div');
-      ghost.className = 'rr-card ghost';
-      ghost.innerHTML = cardHtml(deck[1]);
-      deckEl.append(ghost);
+  function nextWave() {
+    if (!queue.length) return (wave = null);
+    const group = queue.shift();
+    const gates = gatesFor(group, cats.map((c) => c.id));
+    // A wave only files anything once the player has chosen a lane for it.
+    wave = { group, gates, start: performance.now(), chosen: false };
+    things.push({ kind: 'gates', z: 1, gates, group });
+    // a couple of carts on the run-up to the next wave
+    for (let i = 0; i < Math.min(3, 1 + Math.floor(filed / 6)); i++) {
+      if (Math.random() < 0.7) things.push({ kind: 'cart', z: 1.45 + i * 0.22, lane: Math.floor(Math.random() * 3) });
     }
-    card = { group: deck.shift(), el: document.createElement('div') };
-    card.el.className = 'rr-card';
-    card.el.innerHTML = cardHtml(card.group);
-    deckEl.append(card.el);
-    for (const b of ui.querySelectorAll('.rr-cats button')) b.classList.toggle('sug', b.dataset.a === card.group.suggestion);
-    budget = Math.max(3.5, 7 - filed * 0.08);
-    deadline = performance.now() + budget * 1000;
-    drag(card);
+    announce(`${group.label}: ${fmt.money(group.total)}, ${group.count} charges. Gates: ${gates.map((a) => labelOf[a]).join(', ')}.`);
   }
 
-  function resolve(action, dir = 'r') {
-    if (!card || done) return;
-    const { group, el } = card;
-    card = null;
-    el.classList.add(`out-${dir}`);
-    if (action === 'skip') {
-      deck.push(group);
-      skipped++;
-      streak = 0;
-    } else {
-      const wise = action === group.suggestion;
-      const fast = deadline - performance.now() > (budget * 1000) / 2;
-      streak = wise || fast ? streak + 1 : 0;
-      score += Math.round((100 + group.count * 5) * (wise ? 2 : 1) * (fast ? 1.5 : 1) * (1 + streak * 0.1));
-      filed += group.count;
-      if (action.startsWith('cat:')) {
-        const cat = action.slice(4);
-        tally[cat] = (tally[cat] ?? 0) + group.total;
-        if (cat === 'Subscriptions' && group.flags.includes('recurring')) subs.set(group.label, Math.abs(group.total / group.count));
-      }
-      act(group.id, action).catch(() => {});
-      renderSide();
-    }
-    setTimeout(deal, 180);
+  function file(action, how = 'gate') {
+    if (!wave) return;
+    const { group } = wave;
+    const wise = action === group.suggestion;
+    const fast = performance.now() - wave.start < 4000;
+    streak = wise || fast ? streak + 1 : 0;
+    score += runScore({ count: group.count, wise, fast, streak });
+    filed += group.count;
+    if (action.startsWith('cat:')) tally[action.slice(4)] = (tally[action.slice(4)] ?? 0) + group.total;
+    const g0 = geo();
+    const y = g0.bottom - 60;
+    fx.burst(laneX(runner.lane, y, g0), y, colorOf[action] ?? '#f2b632', 30);
+    fx.float(view.w / 2, view.h * 0.45, `${labelOf[action].toUpperCase()} · ${truncate(group.label, 20)}${wise ? ' ★' : ''}`, wise ? '#f2b632' : '#f4f1ea', 18);
+    act(group.id, action).catch(() => {});
+    things = things.filter((t) => t.kind !== 'gates');
+    if (how === 'key') things = things.filter((t) => t.kind !== 'cart' || t.z < 1);
+    speed = SPEED0 + Math.min(0.35, filed * 0.0015 + (scan.groups.length - queue.length) * 0.006);
+    nextWave();
   }
 
-  function drag(c) {
-    let start = null;
-    c.el.addEventListener('pointerdown', (e) => {
-      start = { x: e.clientX, y: e.clientY };
-      c.el.setPointerCapture(e.pointerId);
-      c.el.style.transition = 'none';
-    });
-    c.el.addEventListener('pointermove', (e) => {
-      if (!start) return;
-      const dx = e.clientX - start.x;
-      const dy = e.clientY - start.y;
-      c.el.style.transform = `translate(${dx}px, ${Math.min(0, dy)}px) rotate(${dx / 20}deg)`;
-    });
-    c.el.addEventListener('pointerup', (e) => {
-      if (!start) return;
-      const dx = e.clientX - start.x;
-      const dy = e.clientY - start.y;
-      start = null;
-      c.el.style.transition = '';
-      c.el.style.transform = '';
-      if (dy < -90 && Math.abs(dy) > Math.abs(dx)) resolve('flag', 'u');
-      else if (dx > 110 && c.group.suggestion) resolve(c.group.suggestion, 'r');
-      else if (dx < -110) resolve('skip', 'l');
-    });
+  function skip(reason = 'SKIPPED · BACK OF THE LINE') {
+    if (!wave) return;
+    queue.push(wave.group);
+    skipped++;
+    streak = 0;
+    fx.float(view.w / 2, view.h * 0.45, reason, '#c9bfae', 15);
+    things = things.filter((t) => t.kind !== 'gates');
+    nextWave();
   }
 
-  ui.querySelector('.rr-cats').addEventListener('click', (e) => {
-    const b = e.target.closest('button');
-    if (b) resolve(b.dataset.a);
-  });
-
-  const kb = keyboard((e) => {
-    if (!card) return;
+  kb = keyboard((e) => {
+    if (over) return;
     const k = e.key.toLowerCase();
-    if (k === ' ' || k === 'enter') {
-      if (card.group.suggestion) resolve(card.group.suggestion);
-      return;
-    }
-    if (k === 'f') return resolve('flag', 'u');
-    if (k === 's' || k === 'arrowleft') return resolve('skip', 'l');
+    if (k === 'arrowleft' || k === 'a') runner.lane = Math.max(0, runner.lane - 1);
+    if (k === 'arrowright' || k === 'd') runner.lane = Math.min(2, runner.lane + 1);
+    if (['arrowleft', 'a', 'arrowright', 'd', 'arrowdown', 's', 'enter'].includes(k) && wave) wave.chosen = true;
+    if ((k === ' ' || k === 'arrowup' || k === 'w') && runner.jump <= 0) runner.jump = 0.75;
+    if (k === 'f') file('flag', 'key');
     const cat = cats.find((c) => c.key === k);
-    if (cat) resolve(cat.id);
+    if (cat) file(cat.id, 'key');
+  });
+  canvas.addEventListener('pointerdown', (e) => {
+    runner.lane = Math.max(0, Math.min(2, Math.floor((e.offsetX / view.w) * 3)));
+    if (wave) wave.chosen = true;
   });
 
-  function tick() {
-    if (done) return;
-    if (card) {
-      const left = Math.max(0, deadline - performance.now()) / (budget * 1000);
-      timerEl.style.transform = `scaleX(${left})`;
-      if (left <= 0) resolve('skip', 'l');
-    }
-    setStats([
-      ['Score', score.toLocaleString()],
-      ['Streak', streak > 1 ? `×${streak}` : '-'],
-      ['Merchants left', String(deck.length + (card ? 1 : 0))],
-      ['Transactions filed', `${filed} / ${scan.stats.open}`],
-      ['Skipped', String(skipped)],
-    ]);
-    raf = requestAnimationFrame(tick);
-  }
-
-  function finish() {
-    done = true;
-    const monthly = [...subs.values()].reduce((s, v) => s + v, 0);
+  function finish(title) {
+    over = true;
+    stopLoop();
+    const subs = Object.entries(tally).sort((a, b) => a[1] - b[1]);
     results(root, {
-      title: 'BOOKS BALANCED',
+      title,
       lines: [
-        `Your categorised CSV, expense-report.md and merchant-rules.json are in ${chore.target.replace(/[\\/][^\\/]+$/, '')}.`,
-        subs.size ? `You are paying ${fmt.money(monthly * 12)} a year across ${subs.size} subscriptions.` : '',
+        `Your categorised CSV, expense-report.md and merchant-rules.json are next to ${chore.target.split(/[/\\]/).pop()}.`,
+        subs.length ? `Biggest spend: ${subs[0][0]} at ${fmt.money(subs[0][1])}.` : '',
+        queue.length || wave ? `${queue.length + (wave ? 1 : 0)} merchants are still waiting; everything you filed stays filed.` : '',
       ].filter(Boolean),
       stats: [
         [score.toLocaleString(), 'score'],
         [filed.toLocaleString(), 'transactions filed'],
-        [String(subs.size), 'subscriptions'],
+        [String(skipped), 'skipped'],
       ],
       onExit: exit,
     });
   }
 
-  renderSide();
-  deal();
-  raf = requestAnimationFrame(tick);
+  nextWave();
+  stopLoop = loop((dt, t) => {
+    if (over) return;
+    const W = view.w;
+    const H = view.h;
+    const G = geo();
+    distance += speed * dt;
+    runner.x += (runner.lane - runner.x) * Math.min(1, dt * 14);
+    runner.jump = Math.max(0, runner.jump - dt);
+    hurt = Math.max(0, hurt - dt);
+
+    for (const th of things) th.z -= speed * dt;
+    for (const th of [...things]) {
+      if (th.z > 0.04) continue;
+      things = things.filter((x) => x !== th);
+      if (th.kind === 'gates') {
+        if (runner.jump > 0) skip();
+        else if (!wave?.chosen) skip('NO LANE PICKED · NOTHING FILED');
+        else file(th.gates[runner.lane]);
+      } else if (th.kind === 'cart' && th.lane === runner.lane && runner.jump <= 0 && hurt <= 0) {
+        hearts--;
+        hurt = 1;
+        streak = 0;
+        fx.float(W / 2, H * 0.6, 'OOF! CART', '#d93f25', 22);
+        if (hearts <= 0) return finish('CHECKOUT CLOSED');
+      }
+    }
+    if (!wave && !things.some((x) => x.kind === 'gates')) return finish('BOOKS BALANCED');
+    fx.step(dt);
+
+    // ---------- draw ----------
+    g.fillStyle = '#15141b';
+    g.fillRect(0, 0, W, H);
+    // store sign on the horizon
+    g.fillStyle = '#22202b';
+    g.fillRect(0, 0, W, G.horizon);
+    g.fillStyle = '#f2b632';
+    g.font = `700 ${Math.min(22, W / 30)}px Silkscreen, monospace`;
+    g.textAlign = 'center';
+    g.fillText('CHECKOUT', W / 2, G.horizon - 12);
+    // road
+    g.fillStyle = '#e8dfcf';
+    g.beginPath();
+    g.moveTo(laneX(-0.5, G.horizon, G), G.horizon);
+    g.lineTo(laneX(2.5, G.horizon, G), G.horizon);
+    g.lineTo(laneX(2.5, H, G), H);
+    g.lineTo(laneX(-0.5, H, G), H);
+    g.fill();
+    // moving floor tiles
+    g.fillStyle = '#d6cbb6';
+    for (let i = 0; i < 14; i++) {
+      const z = 1 - ((i / 14 + distance * 2) % 1);
+      const a = project(z, G);
+      const b = project(z - 0.035, G);
+      g.fillRect(laneX(-0.5, a.y, G), a.y, laneX(2.5, a.y, G) - laneX(-0.5, a.y, G), Math.max(1, b.y - a.y));
+    }
+    // lane lines
+    g.strokeStyle = '#1d1b16';
+    g.lineWidth = 2;
+    for (const l of [0.5, 1.5]) {
+      g.beginPath();
+      g.moveTo(laneX(l, G.horizon, G), G.horizon);
+      g.lineTo(laneX(l, H, G), H);
+      g.stroke();
+    }
+
+    // far things first
+    for (const th of [...things].sort((a, b) => b.z - a.z)) {
+      if (th.z > 1) continue;
+      const { y, s } = project(th.z, G);
+      if (th.kind === 'cart') {
+        const x = laneX(th.lane, y, G);
+        const w = 70 * s;
+        g.fillStyle = '#d93f25';
+        roundRect(g, x - w / 2, y - w * 0.8, w, w * 0.6, 4 * s);
+        g.fill();
+        g.strokeStyle = '#1d1b16';
+        g.lineWidth = Math.max(1, 3 * s);
+        g.stroke();
+        g.fillStyle = '#1d1b16';
+        g.beginPath();
+        g.arc(x - w * 0.3, y - w * 0.12, 6 * s, 0, 7);
+        g.arc(x + w * 0.3, y - w * 0.12, 6 * s, 0, 7);
+        g.fill();
+      } else {
+        th.gates.forEach((a, lane) => {
+          const x = laneX(lane, y, G);
+          const w = (W / 3.6) * s;
+          const h = 90 * s;
+          g.fillStyle = colorOf[a] ?? '#6b665c';
+          g.fillRect(x - w / 2, y - h, w, h * 0.42);
+          g.fillRect(x - w / 2, y - h, w * 0.08, h);
+          g.fillRect(x + w / 2 - w * 0.08, y - h, w * 0.08, h);
+          g.strokeStyle = '#1d1b16';
+          g.lineWidth = Math.max(1, 3 * s);
+          g.strokeRect(x - w / 2, y - h, w, h * 0.42);
+          g.fillStyle = '#fffdf8';
+          const size = Math.max(8, 18 * s);
+          g.font = `700 ${size}px Silkscreen, monospace`;
+          g.fillText(labelOf[a].toUpperCase(), x, y - h + h * 0.3);
+          if (a === th.group.suggestion && s > 0.35) {
+            g.fillStyle = '#f2b632';
+            g.font = `700 ${Math.max(8, 13 * s)}px Silkscreen, monospace`;
+            g.fillText(th.group.aiSuggested ? '★ CLAUDE' : '★ GUESS', x, y - h - 6 * s);
+          }
+        });
+      }
+    }
+
+    // runner
+    const ry = G.bottom - 20 - (runner.jump > 0 ? Math.sin((runner.jump / 0.75) * Math.PI) * 70 : 0);
+    const rx = laneX(runner.x, G.bottom, G);
+    if (!(hurt > 0 && !reducedMotion && Math.floor(t * 14) % 2)) drawSprite(g, 'robot', rx - 20, ry - 40, 4, '#12895f');
+    g.fillStyle = 'rgba(0,0,0,0.25)';
+    g.beginPath();
+    g.ellipse(rx, G.bottom + 2, 22, 6, 0, 0, 7);
+    g.fill();
+
+    // the receipt for the current wave
+    if (wave) {
+      const { group } = wave;
+      const w = Math.min(460, W - 32);
+      const x = (W - w) / 2;
+      roundRect(g, x, 12, w, 74, 8);
+      g.fillStyle = '#fffdf8';
+      g.fill();
+      g.strokeStyle = '#1d1b16';
+      g.lineWidth = 3;
+      g.stroke();
+      g.textAlign = 'left';
+      g.fillStyle = '#1d1b16';
+      g.font = '700 18px Silkscreen, monospace';
+      g.fillText(truncate(group.label, 26), x + 14, 38);
+      g.font = '600 13px "IBM Plex Mono", monospace';
+      g.fillStyle = '#57524a';
+      g.fillText(`${group.count} charge${group.count > 1 ? 's' : ''}${group.flags.length ? ' · ' + group.flags.join(' · ') : ''}`, x + 14, 62);
+      g.textAlign = 'right';
+      g.font = '600 22px "IBM Plex Mono", monospace';
+      g.fillStyle = group.total < 0 ? '#d93f25' : '#12895f';
+      g.fillText(fmt.money(group.total), x + w - 14, 40);
+      g.textAlign = 'center';
+    }
+    // hearts
+    for (let i = 0; i < HEARTS; i++) {
+      g.fillStyle = i < hearts ? '#d93f25' : '#3a3744';
+      g.fillRect(16 + i * 22, H - 28, 16, 14);
+    }
+    fx.draw(g);
+
+    setStats([
+      ['Score', score.toLocaleString()],
+      ['Streak', streak > 1 ? `×${streak}` : '-'],
+      ['Merchants left', String(queue.length + (wave ? 1 : 0))],
+      ['Filed', `${filed} / ${scan.stats.open}`],
+      ['Hearts', `${hearts}/${HEARTS}`],
+    ]);
+  });
+
   return () => {
-    done = true;
-    cancelAnimationFrame(raf);
-    kb.destroy();
+    stopLoop();
+    kb?.destroy();
+    destroyCanvas();
   };
 }
