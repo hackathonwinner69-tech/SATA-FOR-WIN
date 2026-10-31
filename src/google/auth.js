@@ -22,12 +22,30 @@ const REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 const STATE_TTL = 10 * 60 * 1000;
 const TIMEOUT = 30_000;
 const REFRESH_EARLY = 60_000;
-const RETRIES = 4;
+export const RETRIES = 4;
 const MAX_WAIT = 30_000;
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'PUT', 'DELETE']);
 
 const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Whether a request may be sent twice without harm: GET, HEAD, PUT, DELETE, or marked idempotent. */
+export const repeatable = (method = 'GET', idempotent) => idempotent ?? SAFE_METHODS.has(method.toUpperCase());
+
+// Gmail and Drive also refuse over-fast requests with a 403 carrying one of these reasons.
+// Other 403s (dailyLimitExceeded, quotaExceeded, insufficientPermissions, ...) will not pass on a retry.
+const RATE_LIMIT_REASONS = new Set(['rateLimitExceeded', 'userRateLimitExceeded']);
+
+/** Whether Google refused a request for going too fast. It never ran, so it may always be sent again. */
+export const rateLimited = (status, data) => status === 429 || (status === 403 && (data?.error?.errors ?? []).some((e) => RATE_LIMIT_REASONS.has(e?.reason)));
+
+async function peekJson(res) {
+  try {
+    return JSON.parse(await res.clone().text());
+  } catch {
+    return null;
+  }
+}
 
 /** Parse a response body without letting an HTML error page hide the status. */
 async function readBody(res) {
@@ -40,7 +58,7 @@ async function readBody(res) {
   }
 }
 
-function googleError(what, res, data) {
+export function googleError(what, res, data) {
   const detail = data?.error?.message ?? data?.error_description ?? (typeof data?.error === 'string' ? data.error : null);
   const why = detail ?? (data === null ? 'the response was not JSON' : res.statusText);
   const code = typeof data?.error === 'string' ? data.error : data?.error?.status;
@@ -201,14 +219,14 @@ export class GoogleAuth {
   }
 
   /**
-   * Authorised JSON request. Rate limits (429) are always retried; server
-   * errors, timeouts and network errors only when the request is safe to
-   * repeat (GET, HEAD, PUT, DELETE, or `idempotent: true`), so a POST that
-   * creates something never runs twice.
+   * Authorised request; resolves with the final Response, whatever its status.
+   * Rate limits (429, or a 403 saying so) are always retried; server errors, timeouts and network
+   * errors only when the request is safe to repeat (see `repeatable`), so a
+   * POST that creates something never runs twice. A 401 refreshes the token once.
    */
-  async api(url, { method = 'GET', body, query, idempotent } = {}) {
+  async send(url, { method = 'GET', headers = {}, body, query, idempotent } = {}) {
     const target = query ? `${url}?${new URLSearchParams(query)}` : url;
-    const repeatable = idempotent ?? SAFE_METHODS.has(method.toUpperCase());
+    const safe = repeatable(method, idempotent);
     let refreshed = false;
     for (let attempt = 0; ; attempt++) {
       const canRetry = attempt < RETRIES;
@@ -217,18 +235,18 @@ export class GoogleAuth {
       try {
         res = await this.fetch(target, {
           method,
-          headers: { authorization: `Bearer ${accessToken}`, ...(body ? { 'content-type': 'application/json' } : {}) },
-          body: body ? JSON.stringify(body) : undefined,
+          headers: { authorization: `Bearer ${accessToken}`, ...headers },
+          body,
           signal: AbortSignal.timeout(TIMEOUT),
         });
       } catch (err) {
-        if (repeatable && canRetry) {
+        if (safe && canRetry) {
           await this.sleep(this.backoff(attempt));
           continue;
         }
         throw fetchError(`Google API ${method}`, err);
       }
-      if (canRetry && (res.status === 429 || (res.status >= 500 && repeatable))) {
+      if (canRetry && ((res.status >= 500 && safe) || rateLimited(res.status, res.status === 403 ? await peekJson(res) : null))) {
         await res.body?.cancel().catch(() => {});
         await this.sleep(this.backoff(attempt, res.headers.get('retry-after')));
         continue;
@@ -239,11 +257,23 @@ export class GoogleAuth {
         if (this.token) this.token.expires_at = 0; // token revoked or expired early: refresh once
         continue;
       }
-      const data = await readBody(res);
-      if (!res.ok) throw googleError(`Google API ${method}`, res, data);
-      if (!data) throw Object.assign(new Error(`Google API ${method} returned HTTP ${res.status} but the response was not JSON`), { status: 502 });
-      return data;
+      return res;
     }
+  }
+
+  /** Authorised JSON request, with the retry rules of `send`. */
+  async api(url, { method = 'GET', body, query, idempotent } = {}) {
+    const res = await this.send(url, {
+      method,
+      query,
+      idempotent,
+      headers: body ? { 'content-type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await readBody(res);
+    if (!res.ok) throw googleError(`Google API ${method}`, res, data);
+    if (!data) throw Object.assign(new Error(`Google API ${method} returned HTTP ${res.status} but the response was not JSON`), { status: 502 });
+    return data;
   }
 
   /** Milliseconds to wait before retry number `attempt`: Retry-After if Google sent one, else exponential with jitter. */

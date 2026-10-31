@@ -148,7 +148,9 @@ export function createInboxChore({
     async scan() {
       const messages = await provider.list();
       const groups = groupBySender(messages);
-      return { groups, stats: { messages: messages.length, senders: groups.length, remaining: messages.length } };
+      // Messages listed but not read yet (Gmail reads headers in the background) still count as left to do.
+      const loading = provider.pending ?? 0;
+      return { groups, stats: { messages: messages.length, senders: groups.length, loading, remaining: messages.length + loading } };
     },
 
     async apply(group, action) {
@@ -235,5 +237,8 @@ export function createInboxChore({
       const restored = await provider.restore(undo.moved);
       return { restored, summary: `moved ${restored} messages back to the inbox` };
     },
+
+    /** Log out of IMAP, or stop Gmail's background read. */
+    close: () => provider.close?.(),
   };
 }

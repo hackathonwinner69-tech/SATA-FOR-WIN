@@ -40,12 +40,16 @@ export default async function play(ctx) {
   setStats([['Scanning', 'inbox…']]);
   const scan = await ctx.scan();
   const queue = [...scan.groups];
-  const totalMail = scan.stats.messages;
+  // Gmail reads a big inbox in the background, so the first scan may cover only the newest mail.
+  const totalMail = scan.stats.remaining ?? scan.stats.messages;
+  let loading = scan.stats.loading ?? 0;
+  let topping = false;
   setStats([]);
 
+  const still = loading ? ` ChoreCade is still reading ${loading.toLocaleString()} more; their senders join in as they arrive.` : '';
   await intro(root, {
     title: 'INBOX INVADERS',
-    story: `${totalMail.toLocaleString()} emails from ${queue.length} senders are invading. Each ship is one sender: one hit handles every email it ever sent you. The ring around a ship shows the weapon ChoreCade would pick. Gold ships are people: trashing or unsubscribing a human takes two separate presses of fire.`,
+    story: `${scan.stats.messages.toLocaleString()} emails from ${queue.length} senders are invading.${still} Each ship is one sender: one hit handles every email it ever sent you. The ring around a ship shows the weapon ChoreCade would pick. Gold ships are people: trashing or unsubscribing a human takes two separate presses of fire.`,
     keys: [
       ['← →', 'move (or use the mouse)'],
       ['Space', 'fire (or click)'],
@@ -151,6 +155,28 @@ export default async function play(ctx) {
     fire();
   });
 
+  /**
+   * Once every known sender is out, scan again for the senders of mail read
+   * since. A scan holds back moves queued after it, so this waits until the queue is empty.
+   */
+  async function topUp() {
+    topping = true;
+    try {
+      const next = await ctx.scan();
+      if (over) return;
+      const fresh = new Map(next.groups.map((g) => [g.id, g]));
+      for (const s of ships) s.group = fresh.get(s.group.id) ?? s.group;
+      const flying = new Set(ships.map((s) => s.group.id));
+      queue.splice(0, queue.length, ...next.groups.filter((g) => !flying.has(g.id)));
+      loading = next.stats.loading ?? 0;
+    } catch (err) {
+      toast(`Could not read more mail: ${err.message}`, true);
+      loading = 0;
+    } finally {
+      topping = false;
+    }
+  }
+
   function finish() {
     over = true;
     stopLoop();
@@ -223,7 +249,8 @@ export default async function play(ctx) {
       fx.float(s.x + s.w / 2, line, 'ESCAPED', '#64748b', 14);
     }
     fx.step(dt);
-    if (!queue.length && !ships.length && !over) finish();
+    if (!queue.length && loading && !topping && !over) topUp();
+    if (!queue.length && !ships.length && !loading && !topping && !over) finish();
 
     // draw
     g.clearRect(0, 0, W, H);
@@ -281,6 +308,12 @@ export default async function play(ctx) {
     g.closePath();
     g.fill();
     g.shadowBlur = 0;
+    if (!queue.length && !ships.length && (loading || topping)) {
+      g.fillStyle = '#cbd5ff';
+      g.textAlign = 'center';
+      g.font = '700 16px ui-monospace, Consolas, monospace';
+      g.fillText(`Still reading ${loading.toLocaleString()} more emails…`, W / 2, H * 0.4);
+    }
     fx.draw(g);
 
     setStats([
@@ -290,6 +323,7 @@ export default async function play(ctx) {
       ['Senders left', String(queue.length + ships.length)],
       ['Emails handled', `${handled.toLocaleString()} / ${totalMail.toLocaleString()}`],
       ['Escaped', String(escaped)],
+      ...(loading ? [['Still reading', loading.toLocaleString()]] : []),
     ]);
   });
 

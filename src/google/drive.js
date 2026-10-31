@@ -1,9 +1,12 @@
 // A Google Drive folder as a Folder Frenzy store. Bins are subfolders created
 // on demand; Trash is Drive's own trash (restorable for 30 days). Duplicates
 // come from Drive's md5Checksum, so nothing is downloaded.
-import { pool } from './gmail.js';
+import { answerError, batch, chunks, pool, succeeded } from './batch.js';
 
 const API = 'https://www.googleapis.com/drive/v3/files';
+const BATCH = 'https://www.googleapis.com/batch/drive/v3';
+const PATH = '/drive/v3/files';
+const BATCH_SIZE = 100; // Drive's limit for one batch request
 const FOLDER = 'application/vnd.google-apps.folder';
 
 /** Google's own formats have no file extension; place them by MIME type instead. */
@@ -25,10 +28,10 @@ function partialMove(err, moved, count) {
 }
 
 export class DriveStore {
-  constructor(auth, { folderId = 'root', concurrency = 8 } = {}) {
+  constructor(auth, { folderId = 'root', inFlight = 2 } = {}) {
     this.auth = auth;
     this.folderId = folderId;
-    this.concurrency = concurrency;
+    this.inFlight = inFlight;
     this.kind = 'drive';
     this.bins = new Map(); // bin name -> folder id
   }
@@ -75,24 +78,27 @@ export class DriveStore {
   }
 
   /**
-   * PATCH every file the same way. Setting trashed or parents is safe to repeat.
-   * After the first failure no new requests start; returns the ids that went through, in order.
+   * PATCH every file the same way, 100 files per batch request. Setting trashed
+   * or parents is safe to repeat. After the first failure no new batches start;
+   * returns the ids that went through, in order.
    */
-  async patchAll(ids, request) {
+  async patchAll(ids, { query, body }) {
     const ok = new Set();
     let failure = null;
-    await pool(ids, this.concurrency, async (id) => {
+    await pool(chunks(ids, BATCH_SIZE), this.inFlight, async (chunk) => {
       if (failure) return;
       try {
-        await this.auth.api(`${API}/${id}`, { method: 'PATCH', idempotent: true, ...request });
-        ok.add(id);
+        const calls = chunk.map((id) => ({ method: 'PATCH', path: `${PATH}/${encodeURIComponent(id)}`, query, body, idempotent: true }));
+        (await batch(this.auth, BATCH, calls)).forEach((answer, k) => {
+          if (succeeded(answer)) ok.add(chunk[k]);
+          else failure ??= answerError('Google API PATCH', answer);
+        });
       } catch (err) {
         failure ??= err;
       }
     });
     return { done: ids.filter((id) => ok.has(id)), failure };
   }
-
   async move(ids, bin) {
     if (bin === null) {
       const { done, failure } = await this.patchAll(ids, { query: { fields: 'id' }, body: { trashed: true } });

@@ -295,3 +295,20 @@ test('a sign-in that Google revoked takes the Gmail and Drive cabinets with it',
   assert.equal(arcade.chores.size, 0);
   await rm(dir, { recursive: true, force: true });
 });
+
+test('a 403 rate limit is retried like a 429, even for a create; other 403s are not', async () => {
+  const refused = (reason, message = 'User Rate Limit Exceeded') => json({ error: { code: 403, message, errors: [{ domain: 'usageLimits', reason, message }] } }, 403);
+  const post = signedIn((call, calls) => (calls.length === 1 ? refused('userRateLimitExceeded') : json({ id: 'f1' })));
+  assert.deepEqual(await post.auth.api(API, { method: 'POST', body: { name: 'Documents' } }), { id: 'f1' });
+  assert.equal(post.google.calls.length, 2, 'refused, so it never ran: safe to send again');
+
+  const get = signedIn((call, calls) => (calls.length < 3 ? refused('rateLimitExceeded', 'Rate Limit Exceeded') : json({ files: [] })));
+  assert.deepEqual(await get.auth.api(API), { files: [] });
+  assert.equal(get.google.calls.length, 3);
+
+  for (const reason of ['dailyLimitExceeded', 'quotaExceeded', 'insufficientPermissions']) {
+    const other = signedIn(() => refused(reason, `no: ${reason}`));
+    await assert.rejects(other.auth.api(API), (err) => err.status === 403 && err.message === `Google API GET failed with HTTP 403: no: ${reason}`);
+    assert.equal(other.google.calls.length, 1, `${reason} is not retried`);
+  }
+});
