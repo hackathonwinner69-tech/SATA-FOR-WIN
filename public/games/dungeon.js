@@ -1,272 +1,170 @@
-// Lint Dungeon. An interactive crawl: each floor is one lint pass, each
-// monster one broken rule with HP equal to how often it is broken. Spells
-// are real: Autofix runs ESLint's fixer for that rule across the project.
-// Whatever survives regroups on the next floor, which is a fresh lint pass.
-import { esc, intro, keyboard, results } from './kit.js';
-
-const STYLE = `
-.ld { position:absolute; inset:0; display:flex; flex-direction:column; gap:14px; padding:18px; overflow:auto; background:radial-gradient(900px 400px at 50% 110%, #3b0a2a55, transparent); }
-.ld-story { font:14px/1.55 ui-monospace,Consolas,monospace; color:#cbd5e1; min-height:3.2em; max-width:900px; }
-.ld-story b { color:#f472b6; }
-.ld-focus { display:flex; align-items:center; gap:10px; font:12px ui-monospace,Consolas,monospace; color:#8a97b8; }
-.ld-focus .ld-bar { flex:1; max-width:340px; height:10px; background:#141d36; border-radius:99px; overflow:hidden; }
-.ld-focus .ld-bar i { display:block; height:100%; background:linear-gradient(90deg,#f43f5e,#a3e635); transition:width .2s; }
-.ld-room { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:14px; flex:1; align-content:start; }
-.ld-mon { position:relative; background:linear-gradient(180deg,#1a1430,#0f1629); border:1px solid #2b2550; border-radius:16px; padding:16px; cursor:pointer; transition:transform .15s, border-color .15s, opacity .3s; }
-.ld-mon.sel { border-color:#f472b6; box-shadow:0 0 0 1px #f472b6, 0 0 30px -10px #f472b6; transform:translateY(-3px); }
-.ld-mon.dead { opacity:0; transform:scale(.8) rotate(-4deg); pointer-events:none; }
-.ld-mon.hit { animation:shake .3s; }
-@keyframes shake { 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
-.ld-face { font-size:44px; line-height:1; }
-.ld-name { font:800 15px ui-monospace,Consolas,monospace; color:#f9a8d4; margin-top:8px; word-break:break-all; }
-.ld-hp { height:8px; background:#141d36; border-radius:99px; overflow:hidden; margin:8px 0 4px; position:relative; }
-.ld-hp i { position:absolute; inset:0 auto 0 0; background:#f43f5e; }
-.ld-hp i.fix { background:#a3e635; }
-.ld-meta { font:11px ui-monospace,Consolas,monospace; color:#8a97b8; }
-.ld-taunt { margin-top:8px; font:11px/1.4 ui-monospace,Consolas,monospace; color:#cbd5e1; background:#0b1020; border-radius:8px; padding:8px; }
-.ld-spells { position:sticky; bottom:0; background:linear-gradient(transparent,#070b16 30%); padding-top:14px; display:flex; gap:8px; flex-wrap:wrap; justify-content:center; padding-bottom:6px; }
-.ld-spells button { background:#0f1629; border:1px solid #22304f; border-radius:12px; padding:10px 14px; font:13px ui-monospace,Consolas,monospace; color:#e6ecff; }
-.ld-spells button:hover:not(:disabled) { border-color:var(--c); box-shadow:0 0 18px -6px var(--c); }
-.ld-spells button:disabled { opacity:.35; cursor:not-allowed; }
-.ld-spells kbd { margin-right:6px; }
-`;
-
-const FACES = {
-  'no-unused-vars': '👻',
-  'no-undef': '🕳️',
-  'prefer-const': '🗿',
-  'no-var': '🦖',
-  eqeqeq: '⚖️',
-  curly: '🐍',
-  'prefer-template': '🧵',
-  'object-shorthand': '🦎',
-  'no-else-return': '🪃',
-  'dot-notation': '🔸',
-  'prefer-arrow-callback': '🏹',
-  yoda: '🧙',
-  'parse-error': '💀',
-};
-
-const FLOORS = [
-  'The Swamp of Shadowed Variables',
-  'The Crypt of Loose Equality',
-  'The Hall of Forgotten Braces',
-  'The Abyss of Legacy Code',
-  'The Throne of the Last Warning',
-];
+// Lint Dungeon. A top-down arena: every broken lint rule is a boss bug, bigger
+// the more often the rule is broken. Pick a spell and shoot. A boss falls to
+// one spell, and that spell is what really happens: Autofix runs ESLint's fixer
+// for the rule, Silence adds marked disable comments, Quest log writes it down.
+// Each floor is a fresh lint pass, so whatever a fix exposes comes back below.
+import { Fx, actionBar, intro, keyboard, loop, makeCanvas, reducedMotion, results, roundRect, truncate } from './kit.js';
+import { approach, bossHp, clamp, dist } from './arena.js';
+import { drawSprite } from '../js/sprites.js';
 
 const SPELLS = [
-  { id: 'fix', key: 'F', label: 'Autofix', color: '#a3e635', verb: 'cast AUTOFIX' },
-  { id: 'disable', key: 'S', label: 'Silence', color: '#facc15', verb: 'cast SILENCE' },
-  { id: 'log', key: 'L', label: 'Quest log', color: '#38bdf8', verb: 'write it into the QUEST LOG' },
-  { id: 'skip', key: 'X', label: 'Not today', color: '#64748b', verb: 'back away from' },
+  { id: 'fix', label: 'Autofix', key: '1', color: '#17a673' },
+  { id: 'disable', label: 'Silence', key: '2', color: '#f2b632' },
+  { id: 'log', label: 'Quest log', key: '3', color: '#4f7cf0' },
 ];
+const FLOORS = ['The Swamp of Shadowed Variables', 'The Crypt of Loose Equality', 'The Hall of Forgotten Braces', 'The Abyss of Legacy Code', 'The Last Warning'];
+const ON_FLOOR = 3;
+const HEARTS = 3;
 
 export default async function play(ctx) {
-  const { root, act, setStats, exit } = ctx;
-  const style = document.createElement('style');
-  style.textContent = STYLE;
-  root.append(style);
+  const { root, act, setStats, exit, announce, toast } = ctx;
+  const { canvas, ctx: g, view, destroy: destroyCanvas } = makeCanvas(root);
+  const fx = new Fx();
+  let stopLoop = () => {};
+  let kb = null;
+  let bar = null;
 
   setStats([['Linting', 'project…']]);
   let scan = await ctx.scan();
   const startProblems = scan.stats.problems;
   if (!scan.groups.length) {
-    results(root, { title: 'NO MONSTERS', lines: ['ESLint finds nothing to complain about. The dungeon is already clean.'], stats: [], onExit: exit });
-    return () => {};
+    results(root, { title: 'NO MONSTERS', lines: ['ESLint has nothing to complain about. The dungeon is already clean.'], stats: [], onExit: exit });
+    return () => destroyCanvas();
   }
 
   await intro(root, {
     title: 'LINT DUNGEON',
-    story: `${scan.stats.problems} problems lurk in ${scan.stats.files} files (${scan.stats.engine}). Every monster is one rule. Green HP is what Autofix can burn away for real; red needs a human. Your focus drains while monsters stand. Clear the floor and the survivors regroup below.`,
+    story: `${scan.stats.problems} problems lurk in ${scan.stats.files} files. Every boss is one lint rule. Green bosses can be burned away with Autofix, which really runs ESLint's fixer for that rule; plum ones are immune and need Silence or the Quest log. A boss only falls to one spell, so finish what you start. Clear a floor and whatever survived regroups below.`,
     keys: [
-      ['← → / Tab', 'choose a monster (or click)'],
-      ['F', 'Autofix: ESLint fixes this rule everywhere'],
-      ['S', 'Silence: add a marked eslint-disable comment'],
-      ['L', 'Quest log: write it in LINT_QUESTLOG.md'],
-      ['X', 'Not today: leave it for later'],
+      ['W A S D', 'move (arrow keys work too)'],
+      ['Mouse', 'aim and hold to shoot'],
+      ['Space', 'shoot at the nearest boss'],
+      ['1 2 3', 'Autofix · Silence · Quest log'],
     ],
     start: 'ENTER THE DUNGEON',
   });
 
-  const ui = document.createElement('div');
-  ui.className = 'ld';
-  ui.innerHTML = `<div class="ld-story"></div>
-    <div class="ld-focus">FOCUS <span class="ld-bar"><i></i></span> <span class="ld-focus-n"></span></div>
-    <div class="ld-room"></div>
-    <div class="ld-spells">${SPELLS.map((s) => `<button data-s="${s.id}" style="--c:${s.color}"><kbd>${s.key}</kbd>${s.label}</button>`).join('')}</div>`;
-  root.append(ui);
-  const story = ui.querySelector('.ld-story');
-  const room = ui.querySelector('.ld-room');
-
+  const player = { x: view.w / 2, y: view.h * 0.7, cd: 0, hurt: 0 };
+  let spell = 'fix';
+  let bosses = [];
+  let shots = [];
+  let pending = [];
   let floor = 0;
-  let monsters = [];
-  let selected = 0;
-  let focus = 100;
+  let hearts = HEARTS;
   let slain = 0;
   let sent = 0;
   let landed = 0;
-  const shelved = new Set(); // rules the player chose to leave
-  let done = false;
-  let timer = 0;
-
+  let over = false;
+  let between = false;
+  let aim = null;
+  let firing = false;
+  const shelved = new Set();
   ctx.onImpact((impact, entry) => entry && landed++);
 
-  function narrate(html) {
-    story.innerHTML = html;
-  }
-
-  function renderRoom() {
-    room.innerHTML = '';
-    monsters.forEach((m, i) => {
-      const el = document.createElement('div');
-      el.className = `ld-mon${i === selected ? ' sel' : ''}`;
-      const sample = m.group.samples[0];
-      el.innerHTML = `<div class="ld-face">${FACES[m.group.rule] ?? '👹'}</div>
-        <div class="ld-name">${esc(m.group.rule)}</div>
-        <div class="ld-hp"><i style="width:100%"></i><i class="fix" style="width:${(m.group.fixable / m.group.count) * 100}%"></i></div>
-        <div class="ld-meta">HP ${m.group.count} · ${m.group.fixable} autofixable · ${m.group.size} file${m.group.size > 1 ? 's' : ''}</div>
-        <div class="ld-taunt">“${esc(m.group.detail)}”<br>${esc(sample.file)}:${sample.line}</div>`;
-      el.addEventListener('click', () => {
-        selected = i;
-        renderRoom();
-      });
-      m.el = el;
-      room.append(el);
-    });
-    const target = monsters[selected];
-    for (const b of ui.querySelectorAll('.ld-spells button')) b.disabled = !target || (b.dataset.s === 'fix' && !target.group.fixable);
-  }
+  bar = actionBar(root, SPELLS, (id) => {
+    spell = id;
+    bar.select(id);
+  });
+  bar.select(spell);
 
   function enterFloor() {
-    const groups = scan.groups.filter((g) => !shelved.has(g.rule));
-    if (!groups.length) return finish();
-    monsters = groups.map((group) => ({ group }));
-    selected = 0;
+    pending = scan.groups.filter((gr) => !shelved.has(gr.rule));
+    bosses = [];
+    if (!pending.length) return finish();
     const name = FLOORS[Math.min(floor, FLOORS.length - 1)];
-    narrate(
-      floor === 0
-        ? `You descend into <b>${esc(name)}</b>. ${monsters.length} monsters stir in the dark, the largest a <b>${esc(monsters[0].group.rule)}</b> with ${monsters[0].group.count} HP.`
-        : `Floor ${floor + 1}: <b>${esc(name)}</b>. The survivors regroup: ${monsters.length} remain, ${groups.reduce((s, g) => s + g.count, 0)} problems in all.`,
-    );
-    renderRoom();
+    announce(`Floor ${floor + 1}, ${name}: ${pending.length} bosses, ${pending.reduce((s, x) => s + x.count, 0)} problems.`);
+    fx.float(view.w / 2, view.h * 0.4, `FLOOR ${floor + 1}: ${name.toUpperCase()}`, '#f4f1ea', 20);
+    between = false;
+  }
+
+  function spawn() {
+    if (!pending.length || bosses.length >= ON_FLOOR) return;
+    const group = pending.shift();
+    const edge = Math.floor(Math.random() * 3);
+    const x = edge === 0 ? 40 : edge === 1 ? view.w - 40 : 60 + Math.random() * (view.w - 120);
+    const y = edge === 2 ? 40 : 60 + Math.random() * view.h * 0.4;
+    const hp = bossHp(group.count);
+    bosses.push({ group, x, y, hp, max: hp, by: null, flash: 0, wobble: Math.random() * 6, immune: 0 });
+  }
+
+  function shoot(tx, ty) {
+    if (player.cd > 0 || over || between) return;
+    player.cd = 0.16;
+    const a = Math.atan2(ty - player.y, tx - player.x);
+    shots.push({ x: player.x, y: player.y, vx: Math.cos(a) * 620, vy: Math.sin(a) * 620, spell, life: 1.2 });
+  }
+
+  function hit(boss, s) {
+    const color = SPELLS.find((x) => x.id === s.spell).color;
+    if (s.spell === 'fix' && !boss.group.fixable) {
+      boss.immune = 0.6;
+      fx.float(boss.x, boss.y - 40, 'IMMUNE: ESLINT CANNOT FIX THIS', '#c9bfae', 12);
+      return;
+    }
+    if (boss.by && boss.by !== s.spell) {
+      // switching spells mid-fight starts the fight over: one boss, one real action
+      boss.hp = boss.max;
+      fx.float(boss.x, boss.y - 40, 'SPELL CHANGED: HP RESTORED', '#c9bfae', 12);
+    }
+    boss.by = s.spell;
+    boss.hp--;
+    boss.flash = 0.12;
+    fx.burst(s.x, s.y, color, 8, 120);
+    if (boss.hp > 0) return;
+    bosses = bosses.filter((b) => b !== boss);
+    slain++;
+    sent++;
+    if (s.spell === 'log') shelved.add(boss.group.rule);
+    fx.burst(boss.x, boss.y, color, 40);
+    const partial = s.spell === 'fix' && boss.group.fixable < boss.group.count;
+    const verb = { fix: 'FIXED', disable: 'SILENCED', log: 'LOGGED' }[s.spell];
+    fx.float(boss.x, boss.y - 30, `${verb} ${boss.group.rule}${partial ? ' (PART)' : ''}`, color, 14);
+    act(boss.group.id, s.spell).catch(() => {});
+    if (partial) toast(`${boss.group.count - boss.group.fixable} of ${boss.group.rule} need a human; they regroup below`);
   }
 
   async function nextFloor() {
-    narrate('The floor falls silent. The worker is still sweeping up behind you…');
-    // Wait for the background worker to finish this floor's spells before re-linting.
+    between = true;
+    fx.float(view.w / 2, view.h * 0.45, 'FLOOR CLEAR. THE WORKER SWEEPS UP…', '#f2b632', 16);
     const until = Date.now() + 20_000;
     while (landed < sent && Date.now() < until) await new Promise((r) => setTimeout(r, 150));
+    if (over) return;
     scan = await ctx.scan();
     floor++;
     enterFloor();
   }
 
-  function cast(spellId) {
-    const m = monsters[selected];
-    if (!m || done) return;
-    if (spellId === 'fix' && !m.group.fixable) return narrate(`Autofix fizzles: ESLint cannot fix <b>${esc(m.group.rule)}</b> by itself.`);
-    const spell = SPELLS.find((s) => s.id === spellId);
-    act(m.group.id, spellId).catch(() => {});
-    sent++;
-    // Logged and skipped rules are left standing on purpose; do not meet them again below.
-    if (spellId === 'skip' || spellId === 'log') shelved.add(m.group.rule);
-    if (spellId !== 'skip') slain++;
-    focus = Math.min(100, focus + 6);
-    const partial = spellId === 'fix' && m.group.fixable < m.group.count;
-    narrate(
-      `You ${spell.verb} on <b>${esc(m.group.rule)}</b>. ` +
-        (spellId === 'fix'
-          ? partial
-            ? `${m.group.fixable} of its ${m.group.count} HP burn away; the rest will regroup below.`
-            : `It dissolves: ${m.group.count} problems fixed across ${m.group.size} file${m.group.size > 1 ? 's' : ''}.`
-          : spellId === 'disable'
-            ? `It falls quiet under ${m.group.count} marked comments.`
-            : spellId === 'log'
-              ? 'Its lair is now charted in LINT_QUESTLOG.md.'
-              : 'It will still be here another day.'),
-    );
-    m.el.classList.add('dead');
-    monsters.splice(selected, 1);
-    selected = Math.min(selected, monsters.length - 1);
-    setTimeout(() => (monsters.length ? renderRoom() : nextFloor()), 300);
-  }
-
-  ui.querySelector('.ld-spells').addEventListener('click', (e) => {
-    const b = e.target.closest('button');
-    if (b && !b.disabled) cast(b.dataset.s);
+  kb = keyboard((e) => {
+    const s = SPELLS.find((x) => x.key === e.key);
+    if (s) {
+      spell = s.id;
+      bar.select(spell);
+    }
   });
-
-  const kb = keyboard((e) => {
-    const k = e.key.toLowerCase();
-    if (k === 'arrowright' || k === 'tab') {
-      e.preventDefault();
-      selected = (selected + 1) % Math.max(1, monsters.length);
-      renderRoom();
-    }
-    if (k === 'arrowleft') {
-      selected = (selected - 1 + monsters.length) % Math.max(1, monsters.length);
-      renderRoom();
-    }
-    const spell = SPELLS.find((s) => s.key.toLowerCase() === k);
-    if (spell) cast(spell.id);
+  canvas.addEventListener('pointermove', (e) => (aim = { x: e.offsetX, y: e.offsetY }));
+  canvas.addEventListener('pointerdown', (e) => {
+    aim = { x: e.offsetX, y: e.offsetY };
+    firing = true;
   });
+  const release = () => (firing = false);
+  window.addEventListener('pointerup', release);
 
-  // Monsters chip at your focus while you hesitate: a little pressure, no real harm.
-  timer = setInterval(() => {
-    if (done || !monsters.length) return;
-    const attacker = monsters[Math.floor(Math.random() * monsters.length)];
-    focus -= Math.min(9, 2 + Math.log2(attacker.group.count + 1));
-    attacker.el?.classList.remove('hit');
-    void attacker.el?.offsetWidth;
-    attacker.el?.classList.add('hit');
-    if (focus <= 0) {
-      done = true;
-      results(root, {
-        title: 'YOU PROCRASTINATED',
-        lines: ['Your focus ran out. Everything you already cast really happened and stays done.'],
-        stats: [
-          [String(slain), 'monsters handled'],
-          [String(startProblems), 'problems at the start'],
-        ],
-        onAgain: () => {
-          focus = 100;
-          done = false;
-          nextFloor();
-        },
-        onExit: exit,
-      });
-    }
-  }, 1600);
-
-  const statLoop = setInterval(() => {
-    ui.querySelector('.ld-focus .ld-bar i').style.width = `${Math.max(0, focus)}%`;
-    ui.querySelector('.ld-focus-n').textContent = `${Math.max(0, Math.round(focus))}`;
-    setStats([
-      ['Floor', String(floor + 1)],
-      ['Monsters here', String(monsters.length)],
-      ['Handled', String(slain)],
-      ['Fixed for real', String(ctx.impact().fixed ?? 0)],
-      ['Problems at start', String(startProblems)],
-    ]);
-  }, 200);
-
-  async function finish() {
-    done = true;
+  async function finish(title) {
+    if (over) return;
+    over = true;
+    stopLoop();
     while (landed < sent) await new Promise((r) => setTimeout(r, 150));
     const after = await ctx.scan();
     results(root, {
-      title: after.stats.problems ? 'DUNGEON SURVIVED' : 'DUNGEON CLEANSED',
+      title: title ?? (after.stats.problems ? 'DUNGEON SURVIVED' : 'DUNGEON CLEANSED'),
       lines: [
-        after.stats.problems
-          ? `${after.stats.problems} problems remain: the ones you logged or left for another day.`
-          : 'ESLint has nothing left to say about this project.',
-        'Review the diff before you commit. Every file change can be undone from the real-world log.',
+        title ? 'Your hearts ran out. Everything you cast really happened and stays done.' : after.stats.problems ? `${after.stats.problems} problems remain: the ones you logged for later.` : 'ESLint has nothing left to say about this project.',
+        'Review the diff before you commit. Every change can be undone from the ledger.',
       ],
       stats: [
         [String(startProblems), 'problems at the start'],
         [String(after.stats.problems), 'problems now'],
-        [String(ctx.impact().fixed ?? 0), 'autofixed'],
+        [String(slain), 'bosses beaten'],
         [String(floor + 1), 'floors'],
       ],
       onExit: exit,
@@ -274,10 +172,127 @@ export default async function play(ctx) {
   }
 
   enterFloor();
+  stopLoop = loop((dt, t) => {
+    if (over) return;
+    const W = view.w;
+    const H = view.h;
+    player.cd = Math.max(0, player.cd - dt);
+    player.hurt = Math.max(0, player.hurt - dt);
+
+    // move
+    let dx = 0;
+    let dy = 0;
+    const k = kb.down;
+    if (k.has('ArrowLeft') || k.has('a') || k.has('A')) dx -= 1;
+    if (k.has('ArrowRight') || k.has('d') || k.has('D')) dx += 1;
+    if (k.has('ArrowUp') || k.has('w') || k.has('W')) dy -= 1;
+    if (k.has('ArrowDown') || k.has('s') || k.has('S')) dy += 1;
+    if (dx || dy) {
+      const n = Math.hypot(dx, dy);
+      player.x += (dx / n) * 280 * dt;
+      player.y += (dy / n) * 280 * dt;
+    }
+    player.x = clamp(player.x, 20, W - 20);
+    player.y = clamp(player.y, 20, H - 70);
+
+    // shoot: mouse held, or Space at the nearest boss
+    if (firing && aim) shoot(aim.x, aim.y);
+    if (k.has(' ') && bosses.length) {
+      const target = bosses.reduce((a, b) => (dist(player, a) < dist(player, b) ? a : b));
+      shoot(target.x, target.y);
+    }
+
+    if (!between) {
+      spawn();
+      if (!bosses.length && !pending.length) nextFloor();
+    }
+    for (const b of bosses) {
+      const speed = 34 + floor * 8 + Math.min(30, b.group.count);
+      const next = approach(b, player, speed * dt);
+      b.x = next.x + Math.sin(t * 2 + b.wobble) * 0.6;
+      b.y = next.y + Math.cos(t * 1.6 + b.wobble) * 0.6;
+      b.flash = Math.max(0, b.flash - dt);
+      b.immune = Math.max(0, b.immune - dt);
+      if (dist(b, player) < 26 + b.max * 3 && player.hurt <= 0) {
+        hearts--;
+        player.hurt = 1.4;
+        // the boss reels back so a hit cannot repeat on the next frame
+        const back = approach(player, b, dist(player, b) + 120);
+        b.x = clamp(back.x, 20, W - 20);
+        b.y = clamp(back.y, 20, H - 20);
+        if (hearts <= 0) return finish('YOU PROCRASTINATED');
+      }
+    }
+    for (const s of shots) {
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      s.life -= dt;
+      const b = bosses.find((bb) => dist(bb, s) < 18 + bb.max * 3);
+      if (b) {
+        s.life = 0;
+        hit(b, s);
+      }
+    }
+    shots = shots.filter((s) => s.life > 0 && s.x > -10 && s.x < W + 10 && s.y > -10 && s.y < H + 10);
+    fx.step(dt);
+
+    // ---------- draw ----------
+    g.fillStyle = '#15141b';
+    g.fillRect(0, 0, W, H);
+    g.fillStyle = '#1c1a24';
+    for (let y = 0; y < H; y += 48) for (let x = (y / 48) % 2 ? 0 : 48; x < W; x += 96) g.fillRect(x, y, 48, 48);
+    for (const b of bosses) {
+      const px = 3 + b.max * 0.7;
+      const tint = b.flash > 0 ? '#ffffff' : b.immune > 0 ? '#6b665c' : b.group.rule === 'parse-error' ? '#d93f25' : b.group.fixable ? '#17a673' : '#b4447a';
+      drawSprite(g, 'bug', b.x - 5 * px, b.y - 4.5 * px, px, tint);
+      // label + HP pips
+      const label = `${truncate(b.group.rule, 22)} ×${b.group.count}`;
+      g.font = '600 11px "IBM Plex Mono", monospace';
+      const w = g.measureText(label).width + 12;
+      roundRect(g, b.x - w / 2, b.y + 5 * px, w, 18, 4);
+      g.fillStyle = '#fffdf8';
+      g.fill();
+      g.fillStyle = '#1d1b16';
+      g.textAlign = 'center';
+      g.fillText(label, b.x, b.y + 5 * px + 13);
+      for (let i = 0; i < b.max; i++) {
+        g.fillStyle = i < b.hp ? (b.by ? SPELLS.find((s) => s.id === b.by).color : '#f4f1ea') : '#3a3744';
+        g.fillRect(b.x - b.max * 6 + i * 12, b.y - 5 * px - 10, 9, 6);
+      }
+    }
+    const color = SPELLS.find((s) => s.id === spell).color;
+    for (const s of shots) {
+      g.fillStyle = SPELLS.find((x) => x.id === s.spell).color;
+      g.fillRect(s.x - 3, s.y - 3, 6, 6);
+    }
+    if (aim && !reducedMotion) {
+      g.strokeStyle = color;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(aim.x, aim.y, 10, 0, 7);
+      g.stroke();
+    }
+    if (!(player.hurt > 0 && !reducedMotion && Math.floor(t * 12) % 2)) drawSprite(g, 'robot', player.x - 18, player.y - 18, 3.6, color);
+    for (let i = 0; i < HEARTS; i++) {
+      g.fillStyle = i < hearts ? '#d93f25' : '#3a3744';
+      g.fillRect(16 + i * 22, 16, 16, 14);
+    }
+    fx.draw(g);
+
+    setStats([
+      ['Floor', String(floor + 1)],
+      ['Bosses left', String(bosses.length + pending.length)],
+      ['Beaten', String(slain)],
+      ['Fixed for real', String(ctx.impact().fixed ?? 0)],
+      ['Hearts', `${hearts}/${HEARTS}`],
+    ]);
+  });
+
   return () => {
-    done = true;
-    clearInterval(timer);
-    clearInterval(statLoop);
-    kb.destroy();
+    over = true;
+    stopLoop();
+    kb?.destroy();
+    window.removeEventListener('pointerup', release);
+    destroyCanvas();
   };
 }

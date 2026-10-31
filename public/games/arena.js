@@ -39,3 +39,8 @@ export function nearest(p, items, within = Infinity) {
 export function deliveryScore({ count, wise, streak }) {
   return Math.round((50 + count * 10) * (wise ? 2 : 1) * (1 + Math.min(streak, 10) * 0.15));
 }
+
+/** How many hits a lint boss takes: more for rules broken more often, never more than six. */
+export function bossHp(count) {
+  return clamp(Math.ceil(Math.log2(count + 1)), 1, 6);
+}

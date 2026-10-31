@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { approach, clamp, deliveryScore, inside, nearest, wallDoors } from '../public/games/arena.js';
+import { approach, bossHp, clamp, deliveryScore, inside, nearest, wallDoors } from '../public/games/arena.js';
 
 test('approach moves at most one step and lands exactly on the target', () => {
   assert.deepEqual(approach({ x: 0, y: 0 }, { x: 10, y: 0 }, 4), { x: 4, y: 0 });
@@ -35,4 +35,10 @@ test('smart deliveries and streaks pay more, but streak bonus is capped', () => 
   assert.ok(deliveryScore({ count: 10, wise: false, streak: 3 }) > base);
   assert.equal(deliveryScore({ count: 10, wise: false, streak: 50 }), deliveryScore({ count: 10, wise: false, streak: 10 }));
   assert.equal(clamp(5, 0, 3), 3);
+});
+
+test('lint bosses take more hits for bigger rules, capped at six', () => {
+  assert.equal(bossHp(1), 1);
+  assert.ok(bossHp(10) > bossHp(2));
+  assert.equal(bossHp(100000), 6);
 });
