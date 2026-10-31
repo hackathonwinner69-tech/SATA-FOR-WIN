@@ -62,6 +62,7 @@ export class Arcade extends EventEmitter {
         action,
         label: result.summary,
         affected: result.affected,
+        impact: result.impact,
         undo: result.undo,
         dryRun: this.mode === 'dry-run',
       });
@@ -80,7 +81,8 @@ export class Arcade extends EventEmitter {
     return this.queue.enqueue(entry.chore, `undo ${entry.label}`, async () => {
       const result = await chore.undo(entry.undo);
       await this.journal.markUndone(entry.id);
-      this.emit('event', { type: 'undo', chore: entry.chore, entryId: entry.id, summary: result.summary });
+      this.addImpact(entry.chore, Object.fromEntries(Object.entries(entry.impact ?? {}).map(([k, v]) => [k, -v])));
+      this.emit('event', { type: 'undo', chore: entry.chore, entryId: entry.id, summary: result.summary, impact: this.impact[entry.chore] });
       return result;
     });
   }

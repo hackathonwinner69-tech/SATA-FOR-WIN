@@ -174,7 +174,7 @@ export function createExpensesChore({ csvPath, outDir, dryRun = false }) {
       if (a.flagged) flagged.push(t);
       if (a.category === 'Subscriptions') subs.set(t.merchant, Math.abs(t.amount));
     }
-    const money = (n) => (n < 0 ? '-' : '') + '$' + Math.abs(n).toFixed(2);
+    const money = (n) => (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const lines = [
       `# Expense report: ${basename(csvPath)}`,
       '',

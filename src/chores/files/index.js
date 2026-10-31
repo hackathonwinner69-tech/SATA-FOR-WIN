@@ -54,9 +54,16 @@ function hashFile(path) {
   });
 }
 
-function prettyPattern(pattern, ext) {
-  const words = pattern.replace(/#/g, '').replace(/[\s.-]+/g, ' ').trim() || 'unnamed';
-  return `${words[0].toUpperCase()}${words.slice(1)} (*.${ext || '?'})`;
+/** Label a pack from its first file: "WhatsApp Image 2026-01-11 at 9.10.jpeg" -> "WhatsApp Image at (*.jpeg)" */
+function packLabel(name, ext) {
+  const words =
+    name
+      .slice(0, name.length - extname(name).length)
+      .replace(/\(\d+\)/g, '')
+      .replace(/\d+/g, '')
+      .replace(/[\s_.-]+/g, ' ')
+      .trim() || 'unnamed';
+  return `${words} (*.${ext || '?'})`;
 }
 
 export function createFilesChore({ root, dryRun = false }) {
@@ -136,7 +143,7 @@ export function createFilesChore({ root, dryRun = false }) {
               ? pattern === 'unknown'
                 ? `${pack.length} mystery file${pack.length > 1 ? 's' : ''}`
                 : `${pack.length} loose ${pattern.toLowerCase()} file${pack.length > 1 ? 's' : ''}`
-              : prettyPattern(pattern, ext),
+              : packLabel(pack[0].name, ext),
           detail: pack.slice(0, 4).map((f) => f.name).join(', ') + (pack.length > 4 ? ', ...' : ''),
           count: pack.length,
           bytes: pack.reduce((s, f) => s + f.size, 0),

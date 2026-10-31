@@ -26,7 +26,7 @@ export class Journal {
     this.loaded = true;
   }
 
-  async record({ chore, action, label, affected, undo, dryRun = false }) {
+  async record({ chore, action, label, affected, impact = {}, undo, dryRun = false }) {
     await this.load();
     const entry = {
       id: randomUUID(),
@@ -35,6 +35,7 @@ export class Journal {
       action,
       label,
       affected,
+      impact,
       dryRun,
       undo,
       undone: false,
