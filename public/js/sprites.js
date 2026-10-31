@@ -59,6 +59,53 @@ export const SPRITES = {
   ],
 };
 
+// In-game actors.
+Object.assign(SPRITES, {
+  robot: [
+    '...kkkk...',
+    '...kyyk...',
+    '.kkkkkkkk.',
+    '.kwwwwwwk.',
+    '.kwbwwbwk.',
+    '.kwwwwwwk.',
+    '.kkkkkkkk.',
+    'kk.kwwk.kk',
+    '...k..k...',
+    '..kk..kk..',
+  ],
+  bunny: [
+    '.s......s.',
+    '.ss....ss.',
+    '..ssssss..',
+    '.ssssssss.',
+    'ssksssskss',
+    'ssssssssss',
+    '.sssrrsss.',
+    '..ssssss..',
+  ],
+  crate: [
+    'kkkkkkkkkk',
+    'kyyyyyyyyk',
+    'kykkkkkkyk',
+    'kykyyyykyk',
+    'kykyyyykyk',
+    'kykkkkkkyk',
+    'kyyyyyyyyk',
+    'kkkkkkkkkk',
+  ],
+  bug: [
+    'k........k',
+    '.k.kkkk.k.',
+    '..kkkkkk..',
+    'kkkwkkwkkk',
+    '..kkkkkk..',
+    'kkkkkkkkkk',
+    '..kkkkkk..',
+    '.k.kkkk.k.',
+    'k........k',
+  ],
+});
+
 export function spriteSvg(name, { size = 48, label = '' } = {}) {
   const rows = SPRITES[name];
   const w = rows[0].length;

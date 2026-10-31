@@ -93,7 +93,7 @@ function renderMachines() {
           <p class="source" title="${esc(c.target)}">${esc(shortPath(c.target))}</p>
         </div>
         <div class="controls">
-          <button class="btn big" type="button" data-play="${c.id}">Play</button>
+          <button class="btn big" type="button" data-play="${c.id}" aria-label="Play ${esc(c.title)}">Play</button>
           <button class="btn quiet" type="button" data-calm="${c.id}" aria-label="Calm mode for ${esc(c.title)}: no timer, works with a keyboard and screen reader">Calm mode</button>
         </div>
       </li>`;
