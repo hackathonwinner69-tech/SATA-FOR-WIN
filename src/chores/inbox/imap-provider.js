@@ -2,7 +2,7 @@
 // password: https://myaccount.google.com/apppasswords. Nothing is ever
 // expunged: "trash" moves to the Trash mailbox and "archive" moves to the
 // archive (Gmail: All Mail), so every move can be reversed.
-import { parseHeaders } from './headers.js';
+import { isoDate, parseHeaders, toSender } from './headers.js';
 
 async function loadImapFlow() {
   try {
@@ -62,9 +62,11 @@ export class ImapMailProvider {
           const from = msg.envelope?.from?.[0];
           messages.push({
             id: String(msg.uid),
-            from: from ? `${from.name ?? ''} <${from.address}>` : '',
+            from: from?.address ?? '',
+            // The parsed envelope, not a From line rebuilt from it: a name holding "<...>" would be re-read as the address.
+            sender: from ? toSender(from.name, from.address) : undefined,
             subject: msg.envelope?.subject ?? '(no subject)',
-            date: msg.envelope?.date ? new Date(msg.envelope.date).toISOString() : null,
+            date: isoDate(msg.envelope?.date),
             seen: msg.flags?.has('\\Seen') ?? false,
             listUnsubscribe: h['list-unsubscribe'] ?? null,
             listUnsubscribePost: h['list-unsubscribe-post'] ?? null,
@@ -84,8 +86,10 @@ export class ImapMailProvider {
       const lock = await client.getMailboxLock('INBOX');
       try {
         const result = await client.messageMove(ids.join(','), destination, { uid: true });
-        const newUids = result?.uidMap ? [...result.uidMap.values()] : [];
-        return { destination, newUids };
+        if (!result) throw new Error(`the IMAP server did not move the messages to ${destination}`);
+        // Without UIDPLUS the server does not say where the messages went, so the move cannot be undone.
+        if (!result.uidMap?.size) return null;
+        return { destination, newUids: [...result.uidMap.values()] };
       } finally {
         lock.release();
       }
