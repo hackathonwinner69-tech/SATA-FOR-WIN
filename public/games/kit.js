@@ -180,7 +180,8 @@ export function actionBar(root, actions, onPick) {
     b.dataset.id = a.id;
     b.setAttribute('aria-pressed', 'false');
     b.style.setProperty('--c', a.color ?? '#22d3ee');
-    b.innerHTML = `<i></i>${a.key ? `<kbd>${esc(a.key)}</kbd>` : ''} ${esc(a.label)}`;
+    b.setAttribute('aria-label', a.key ? `${a.label} (key ${a.key})` : a.label);
+    b.innerHTML = `<i></i>${a.key ? `<kbd>${esc(a.key)}</kbd>` : ''}<span class="lbl">${esc(a.label)}</span>`;
     b.addEventListener('click', (e) => {
       e.stopPropagation();
       onPick(a.id);

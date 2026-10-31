@@ -15,7 +15,7 @@ export const CABINETS = {
     toasts: 'bottom-left',
   },
   receipts: {
-    accent: '#12895f',
+    accent: '#0f7a54',
     module: '/games/receipts.js',
     what: 'Sprint through the checkout gates. Each gate you take files every charge from one merchant.',
   },

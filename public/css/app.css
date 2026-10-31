@@ -51,10 +51,10 @@
   --ink: #1d1b16;
   --ink-2: #57524a;
   --line: #1d1b16;
-  --tomato: #d93f25;
+  --tomato: #c7361d;
   --cobalt: #2b59d9;
   --sun: #f2b632;
-  --mint: #12895f;
+  --mint: #0f7a54;
   --plum: #9b3d78;
   --crt: #15141b;
   --crt-2: #22202b;
@@ -636,12 +636,12 @@ kbd {
 .bar {
   position: absolute;
   left: 50%;
-  bottom: 12px;
+  bottom: 10px;
   transform: translateX(-50%);
   display: flex;
-  gap: 8px;
+  gap: 6px;
   z-index: 2;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: center;
   max-width: calc(100% - 24px);
 }
@@ -746,6 +746,11 @@ kbd {
   .ledger {
     position: static;
     max-height: 420px;
+  }
+}
+@media (max-width: 760px) {
+  .bar .lbl {
+    display: none;
   }
 }
 @media (max-width: 600px) {
