@@ -3,8 +3,8 @@
 // redirect. https://developers.dropbox.com/oauth-guide
 // The refresh token is kept in a local file readable only by this user.
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { readFile, rm } from 'node:fs/promises';
+import { writeAtomic } from '../core/fsx.js';
 import { cleanLine } from '../core/safety.js';
 
 // Exactly what the Folder Frenzy store calls: users/get_current_account,
@@ -21,7 +21,7 @@ const REFRESH_EARLY = 60_000;
 const RETRIES = 4;
 const MAX_WAIT = 30_000;
 
-const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64url = (buf) => buf.toString('base64url');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** The body as text and, when it parses, as JSON. Dropbox sends 400 errors as plain text. */
@@ -254,17 +254,8 @@ export class DropboxAuth {
 
   /** Write the token to a private temp file, then rename it into place, so the file is never partial or readable by others. */
   async save() {
-    const dir = dirname(this.tokenFile);
-    await mkdir(dir, { recursive: true, mode: 0o700 });
     const { refresh_token, scope, email, account_id } = this.token;
-    const tmp = join(dir, `.${basename(this.tokenFile)}.${randomBytes(6).toString('hex')}.tmp`);
-    try {
-      await writeFile(tmp, JSON.stringify({ refresh_token, scope, email, account_id }), { mode: 0o600, flag: 'wx' });
-      await rename(tmp, this.tokenFile);
-    } catch (err) {
-      await rm(tmp, { force: true }).catch(() => {});
-      throw err;
-    }
+    await writeAtomic(this.tokenFile, JSON.stringify({ refresh_token, scope, email, account_id }), { mode: 0o600, directoryMode: 0o700 });
   }
 
   /**

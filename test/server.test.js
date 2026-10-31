@@ -113,3 +113,18 @@ test('unknown actions are rejected before anything runs', async () => {
   const res = await api('/api/chores/files/act', { method: 'POST', body: JSON.stringify({ groupId: scan.groups[0].id, action: 'move:../../etc' }) });
   assert.equal(res.status, 400);
 });
+
+test('the HTML template cannot bypass the session guard', async () => {
+  const response = await fetch(base + '/chorecade.html');
+  assert.equal(response.status, 401);
+  assert.ok(!(await response.text()).includes('__CHORECADE_TOKEN__'));
+});
+
+test('malformed JSON and unknown API routes return consistent JSON errors', async () => {
+  const malformed = await api('/api/chores/files/act', { method: 'POST', body: '{broken' });
+  assert.equal(malformed.status, 400);
+  assert.deepEqual(await malformed.json(), { error: 'request body must be valid JSON' });
+  const missing = await api('/api/missing');
+  assert.equal(missing.status, 404);
+  assert.deepEqual(await missing.json(), { error: 'no such API route' });
+});

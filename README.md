@@ -236,7 +236,8 @@ src/
   cli.js                 flags → chores → arcade → server
   server.js              Express API, SSE, guards, CSP, self-hosted fonts
   arcade.js              scans, backlog, queue, journal, impact counters
-  core/                  journal, queue, safety guards, safe moves
+  core/                  journal, queue, HTTP errors, bounded concurrency, safe atomic writes
+  demo.js                shared demo setup for the CLI and Vercel
   chores/inbox/          sender grouping, .eml and IMAP providers, unsubscribe
   chores/files/          bins, look-alike packs, duplicates, local folder store
   chores/expenses/       CSV parsing, merchant normalising, report, rules, table for Sheets
@@ -245,11 +246,11 @@ src/
   dropbox/               OAuth (PKCE), Dropbox store, routes
   ai/advisor.js          optional Claude suggestions
 public/
-  js/                    arcade floor, API client, pixel sprites
+  js/                    arcade floor, account controls, tour, API client, pixel sprites
   games/                 invaders, frenzy, blocks, dungeon, calm mode, shared kit
   games/arena.js, platformer.js, well.js      DOM-free game logic, unit-tested in Node
 scripts/seed-demo.js     deterministic demo sandbox
-test/                    185 tests: chores, undo, server guards, Google and Dropbox (fake APIs), game logic, advisor
+test/                    regression tests: chores, undo, server guards, Google and Dropbox (fake APIs), game logic, advisor
 ```
 
 No build step and no front-end framework: plain ES modules and `<canvas>`.
@@ -260,7 +261,7 @@ No build step and no front-end framework: plain ES modules and `<canvas>`.
 | --- | --- |
 | Problem statement alignment | Every game action is a real chore action (`chores/*/index.js` `apply`), run in the background by `core/queue.js` while you keep playing. Inbox, folder, expenses and lint, the four chores in the brief, locally and on Gmail and Drive. |
 | Security | `core/safety.js` (host, origin and token guards, path containment, symlink refusal), CSP in `server.js`, OAuth with PKCE and state in `google/auth.js`, RAW Sheets writes, no secrets on the command line, append-only journal with conservative undo. |
-| Testing | `npm test`: 185 `node:test` tests covering every chore's apply and undo, the server guards, Google and Dropbox flows against fake APIs, the game logic and the advisor. CI on Linux and Windows. |
+| Testing | `npm test`: `node:test` regression tests covering every chore's apply and undo, the server guards, Google and Dropbox flows against fake APIs, the game logic and the advisor. CI on Linux and Windows. |
 | Efficiency | One move handles a whole group; rescans are cached (folders by content hash, Gmail headers by message), so recounting thousands of items takes milliseconds; mailbox headers come from the first 16 KB of each message (64 KB if they run long), in batches of 200; IMAP reuses one connection instead of reconnecting per scan; Gmail batches header fetches and paces itself under the API quota, showing the first senders within seconds while the rest stream in; Drive moves are batched and duplicates come from server checksums; no front-end build or framework. |
 | Accessibility | Calm mode for every chore, live announcements, AA contrast, reduced motion, keyboard play throughout; see [Accessibility](#accessibility). |
 | Code quality | One small interface per chore, sources behind providers and stores, pure game logic split from rendering, ESLint clean, no build step. |
@@ -290,6 +291,7 @@ Prior art shaped three decisions:
 ```bash
 npm test         # node:test
 npm run lint
+npm run check    # lint every JS entry point, then run all tests
 npm run seed     # rebuild the sandbox from scratch
 ```
 

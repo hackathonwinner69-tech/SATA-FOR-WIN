@@ -2,10 +2,10 @@
 // play files every transaction from that merchant into a category, and the
 // categorised CSV, the report and the rules for next month are rewritten on
 // the spot.
-import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, join } from 'node:path';
+import { mkdir, readFile } from 'node:fs/promises';
+import { basename, extname, join } from 'node:path';
 import { assertNotSymlink, mdText } from '../../core/safety.js';
+import { writeAtomic } from '../../core/fsx.js';
 import { parseCsv, toCsv } from './csv.js';
 
 export const CATEGORIES = [
@@ -90,19 +90,6 @@ export function readTransactions(text) {
     return { row: i, date: r[col.date], description: r[col.desc], amount, merchant: normalizeMerchant(r[col.desc]) || r[col.desc] };
   });
   return { header, rows, txns, skipped: all.length - rows.length };
-}
-
-/** Write via a temp file and rename, so a crash never leaves half a file and a planted symlink is refused. */
-async function writeAtomic(path, text) {
-  await assertNotSymlink(path);
-  const tmp = join(dirname(path), `.${basename(path)}.${randomBytes(6).toString('hex')}.tmp`);
-  try {
-    await writeFile(tmp, text, { flag: 'wx' });
-    await rename(tmp, path);
-  } catch (err) {
-    await rm(tmp, { force: true });
-    throw err;
-  }
 }
 
 function monthOf(date) {

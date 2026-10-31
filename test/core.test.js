@@ -264,3 +264,24 @@ test('a scan waits for queued moves and skips groups queued behind it', async (t
   assert.deepEqual((await rescan).groups.map((g) => g.id), ['g1']);
   await arcade.queue.drain();
 });
+
+test('an old scan cannot repopulate a replaced chore', async (t) => {
+  const old = fakeChore(ok);
+  const arcade = await arcadeWith(t, old);
+  let finish;
+  old.scan = () => new Promise((resolve) => { finish = resolve; });
+  const scanning = arcade.scan('fake');
+  await new Promise((resolve) => setImmediate(resolve));
+  arcade.addChore(fakeChore(ok, { target: '/new' }));
+  finish({ groups: [{ id: 'old', ids: ['a'] }], stats: { remaining: 1 } });
+  await assert.rejects(scanning, { status: 409 });
+  assert.equal(arcade.scans.has('fake'), false);
+  assert.equal(arcade.backlog.has('fake'), false);
+});
+
+test('impact is not reported as committed when the journal write fails', async (t) => {
+  const arcade = await arcadeWith(t, fakeChore(ok));
+  arcade.journal.record = async () => { throw new Error('disk full'); };
+  await assert.rejects(arcade.commit('fake', arcade.chore('fake'), 'go', { impact: { gone: 3 } }), /disk full/);
+  assert.deepEqual(arcade.impact.fake, {});
+});

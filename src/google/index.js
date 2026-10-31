@@ -1,6 +1,7 @@
 // Google services in the arcade: once signed in, Gmail becomes an Inbox
 // Invaders cabinet, Drive a Folder Frenzy cabinet, and reviewed expenses can be
 // exported to Google Sheets.
+import { httpError, jsonRoute } from '../core/http.js';
 import { createInboxChore } from '../chores/inbox/index.js';
 import { createFilesChore } from '../chores/files/index.js';
 import { GmailProvider } from './gmail.js';
@@ -50,34 +51,26 @@ export function mountGoogle({ app, api, arcade, auth, port, options }) {
 
   api.get('/google', (req, res) => res.json(status()));
 
-  api.post('/google/connect', (req, res) => {
-    try {
-      if (auth.connected) throw Object.assign(new Error('already connected to Google; disconnect first to switch account or change access'), { status: 409 });
-      res.json({ url: auth.authUrl(redirectUri) });
-    } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message });
-    }
-  });
+  api.post('/google/connect', jsonRoute(() => {
+    if (auth.connected) throw httpError(409, 'already connected to Google; disconnect first to switch account or change access');
+    return { url: auth.authUrl(redirectUri) };
+  }));
 
-  api.post('/google/disconnect', async (req, res) => {
+  api.post('/google/disconnect', jsonRoute(async () => {
     const { revoked } = await auth.disconnect();
     for (const id of GOOGLE_CHORES) arcade.removeChore(id);
     const warning = revoked ? undefined : `Signed out here, but Google did not confirm it removed ChoreCade's access. Remove it at ${PERMISSIONS_URL}`;
-    res.json({ ...status(), revoked, warning });
-  });
+    return { ...status(), revoked, warning };
+  }));
 
-  api.post('/chores/:id/export/sheets', async (req, res) => {
-    try {
-      const chore = arcade.chore(req.params.id);
-      if (!chore.table) throw Object.assign(new Error('this chore has nothing to export'), { status: 400 });
-      if (!auth.connected) throw Object.assign(new Error('sign in with Google first'), { status: 401 });
-      // Creating a spreadsheet goes through the Drive grant; ChoreCade asks for no separate Sheets scope.
-      if (!auth.granted('drive')) throw Object.assign(new Error('Sheets export needs Drive access, which was not granted; sign out and connect again with Drive ticked'), { status: 403 });
-      res.json(await exportToSheets(auth, await chore.table(), { dryRun: options?.dryRun }));
-    } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message });
-    }
-  });
+  api.post('/chores/:id/export/sheets', jsonRoute(async (req) => {
+    const chore = arcade.chore(req.params.id);
+    if (!chore.table) throw httpError(400, 'this chore has nothing to export');
+    if (!auth.connected) throw httpError(401, 'sign in with Google first');
+    // Creating a spreadsheet uses the Drive grant, without a separate Sheets scope.
+    if (!auth.granted('drive')) throw httpError(403, 'Sheets export needs Drive access, which was not granted; sign out and connect again with Drive ticked');
+    return exportToSheets(auth, await chore.table(), { dryRun: options?.dryRun });
+  }));
 
   // Google sends the browser back here. Not token-guarded (it is a top-level
   // navigation from Google), but it only succeeds with a state we issued. It

@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { errorHandler, httpError, jsonRoute } from './core/http.js';
 import { hostGuard, sameToken, tokenGuard } from './core/safety.js';
 import { mountGoogle } from './google/index.js';
 import { mountDropbox } from './dropbox/index.js';
@@ -51,7 +52,7 @@ export function createServer(arcade, { port, token = randomBytes(24).toString('h
   // The page carries the token. Other origins cannot read it, and it is only
   // served to a browser that opened the link printed in the terminal (which
   // leaves a cookie), so another account or app on this machine cannot fetch it.
-  app.get(['/', '/index.html'], async (req, res) => {
+  app.get(['/', '/index.html', '/chorecade.html'], async (req, res) => {
     res.set('cache-control', 'no-store');
     if (typeof req.query.token === 'string' && sameToken(req.query.token, token)) {
       res.cookie(sessionCookie, token, { httpOnly: true, sameSite: 'lax', path: '/' });
@@ -71,35 +72,27 @@ export function createServer(arcade, { port, token = randomBytes(24).toString('h
   api.use(tokenGuard(token));
   api.use(express.json({ limit: '64kb' }));
 
-  const wrap = (fn) => async (req, res) => {
-    try {
-      res.json(await fn(req, res));
-    } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message });
-    }
-  };
-
-  api.get('/state', wrap(() => arcade.summary()));
-  api.post('/chores/:id/scan', wrap((req) => arcade.scan(req.params.id)));
+  api.get('/state', jsonRoute(() => arcade.summary()));
+  api.post('/chores/:id/scan', jsonRoute((req) => arcade.scan(req.params.id)));
   api.post(
     '/chores/:id/act',
-    wrap((req, res) => {
+    jsonRoute((req, res) => {
       const { groupId, action } = req.body ?? {};
-      if (typeof groupId !== 'string' || typeof action !== 'string') throw Object.assign(new Error('groupId and action are required'), { status: 400 });
+      if (typeof groupId !== 'string' || typeof action !== 'string') throw httpError(400, 'groupId and action are required');
       res.status(202);
       return arcade.act(req.params.id, groupId, action);
     }),
   );
   api.get(
     '/journal',
-    wrap(async () => {
+    jsonRoute(async () => {
       await arcade.journal.load();
       return arcade.journal.recent(100);
     }),
   );
   api.post(
     '/journal/:id/undo',
-    wrap(async (req, res) => {
+    jsonRoute(async (req, res) => {
       res.status(202);
       return arcade.undo(req.params.id);
     }),
@@ -112,7 +105,7 @@ export function createServer(arcade, { port, token = randomBytes(24).toString('h
     send({ type: 'hello', state: arcade.summary() });
     arcade.on('event', send);
     const ping = setInterval(() => res.write(': ping\n\n'), 15_000);
-    req.on('close', () => {
+    res.on('close', () => {
       clearInterval(ping);
       arcade.off('event', send);
     });
@@ -120,6 +113,8 @@ export function createServer(arcade, { port, token = randomBytes(24).toString('h
 
   if (google) mountGoogle({ app, api, arcade, port, ...google });
   if (dropbox) mountDropbox({ app, api, arcade, port, ...dropbox });
+  api.use((req, res) => res.status(404).json({ error: 'no such API route' }));
   app.use('/api', api);
+  app.use(errorHandler);
   return { app, token };
 }

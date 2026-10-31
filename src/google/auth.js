@@ -3,8 +3,8 @@
 // https://developers.google.com/identity/protocols/oauth2/native-app
 // The refresh token is kept in a local file readable only by this user.
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { readFile, rm } from 'node:fs/promises';
+import { writeAtomic } from '../core/fsx.js';
 
 export const SCOPES = {
   // Read headers and move mail between labels; cannot permanently delete.
@@ -26,7 +26,7 @@ export const RETRIES = 4;
 const MAX_WAIT = 30_000;
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'PUT', 'DELETE']);
 
-const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64url = (buf) => buf.toString('base64url');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Whether a request may be sent twice without harm: GET, HEAD, PUT, DELETE, or marked idempotent. */
@@ -297,17 +297,8 @@ export class GoogleAuth {
 
   /** Write the token to a private temp file, then rename it into place, so the file is never partial or readable by others. */
   async save() {
-    const dir = dirname(this.tokenFile);
-    await mkdir(dir, { recursive: true, mode: 0o700 });
     const { refresh_token, scope, email } = this.token;
-    const tmp = join(dir, `.${basename(this.tokenFile)}.${randomBytes(6).toString('hex')}.tmp`);
-    try {
-      await writeFile(tmp, JSON.stringify({ refresh_token, scope, email }), { mode: 0o600, flag: 'wx' });
-      await rename(tmp, this.tokenFile);
-    } catch (err) {
-      await rm(tmp, { force: true }).catch(() => {});
-      throw err;
-    }
+    await writeAtomic(this.tokenFile, JSON.stringify({ refresh_token, scope, email }), { mode: 0o600, directoryMode: 0o700 });
   }
 
   /**

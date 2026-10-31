@@ -12,7 +12,8 @@
     "demo": "node scripts/seed-demo.js && node src/cli.js",
     "seed": "node scripts/seed-demo.js",
     "test": "node --test \"test/**/*.test.js\"",
-    "lint": "eslint src public scripts test"
+    "lint": "eslint . --max-warnings 0",
+    "check": "npm run lint && npm test"
   },
   "engines": {
     "node": ">=20.19"

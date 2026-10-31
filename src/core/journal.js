@@ -10,6 +10,7 @@ export class Journal {
   constructor(file) {
     this.file = file;
     this.entries = [];
+    this.byId = new Map();
     this.loading = null;
     this.writes = Promise.resolve();
     this.torn = false;
@@ -31,7 +32,7 @@ export class Journal {
       if (err.code === 'ENOENT') return;
       throw err;
     }
-    const byId = new Map();
+    const byId = this.byId;
     for (const line of text.split('\n')) {
       let item;
       try {
@@ -78,17 +79,19 @@ export class Journal {
       undone: false,
     };
     this.entries.push(entry);
+    this.byId.set(entry.id, entry);
     try {
       await this.append(entry);
     } catch (err) {
       this.entries.splice(this.entries.indexOf(entry), 1);
+      this.byId.delete(entry.id);
       throw err;
     }
     return entry;
   }
 
   get(id) {
-    return this.entries.find((e) => e.id === id);
+    return this.byId.get(id);
   }
 
   async markUndone(id) {

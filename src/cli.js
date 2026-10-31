@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { createDemoChores } from './demo.js';
 import { Arcade } from './arcade.js';
 import { createServer } from './server.js';
 import { createInboxChore } from './chores/inbox/index.js';
@@ -103,19 +104,7 @@ if (live) {
   }
   if (values.lint) chores.push(createLintChore({ root: resolve(values.lint), dryRun }));
 } else {
-  const sandbox = resolve(values.sandbox);
-  if (!existsSync(join(sandbox, 'mail'))) {
-    const { seedDemo } = await import('../scripts/seed-demo.js');
-    console.log(`seeding demo sandbox in ${sandbox} ...`);
-    await seedDemo(sandbox);
-  }
-  // The demo never touches the network: one-click unsubscribe stays off.
-  chores.push(
-    createInboxChore({ provider: new LocalMailProvider(join(sandbox, 'mail')), dataDir: join(sandbox, 'mail'), dryRun }),
-    createFilesChore({ root: join(sandbox, 'Downloads'), dryRun }),
-    createExpensesChore({ csvPath: join(sandbox, 'expenses', 'bank-export.csv'), outDir: join(sandbox, 'expenses'), dryRun }),
-    createLintChore({ root: join(sandbox, 'buggy-app'), dryRun }),
-  );
+  chores.push(...await createDemoChores(resolve(values.sandbox), { dryRun }));
 }
 
 const mode = dryRun ? 'dry-run' : live ? 'live' : 'demo';

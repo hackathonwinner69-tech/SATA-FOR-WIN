@@ -1,12 +1,15 @@
 // Small filesystem helpers shared by chores that move things around.
-import { access, constants, copyFile, link, lstat, mkdir, stat, unlink, utimes } from 'node:fs/promises';
+import { access, constants, copyFile, link, lstat, mkdir, rename, rm, stat, unlink, utimes, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { assertNotSymlink } from './safety.js';
 
 export async function exists(path) {
   try {
     await access(path);
     return true;
-  } catch {
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
     return false;
   }
 }
@@ -16,8 +19,23 @@ async function taken(path) {
   try {
     await lstat(path);
     return true;
-  } catch {
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
     return false;
+  }
+}
+
+/** Replace a file atomically, refusing symlinks and cleaning up failed writes. */
+export async function writeAtomic(path, data, { mode = 0o666, directoryMode = 0o777 } = {}) {
+  await mkdir(dirname(path), { recursive: true, mode: directoryMode });
+  await assertNotSymlink(path);
+  const temporary = join(dirname(path), `.${basename(path)}.${randomBytes(6).toString('hex')}.tmp`);
+  try {
+    await writeFile(temporary, data, { mode, flag: 'wx' });
+    await rename(temporary, path);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => {});
+    throw error;
   }
 }
 

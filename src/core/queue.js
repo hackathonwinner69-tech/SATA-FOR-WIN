@@ -32,15 +32,23 @@ export class JobQueue extends EventEmitter {
       this.emit('job', { ...job });
       this.trim();
     });
-    this.lanes.set(chore, next);
+    this.track(chore, next);
     return job;
   }
 
   /** Run `fn` after everything already queued for `chore`, without making it a job. */
   after(chore, fn) {
     const run = (this.lanes.get(chore) ?? Promise.resolve()).then(fn);
-    this.lanes.set(chore, run.catch(() => {}));
+    this.track(chore, run);
     return run;
+  }
+
+  /** Keep a failed operation from blocking its lane, and release idle lanes. */
+  track(chore, operation) {
+    const tail = operation.catch(() => {}).then(() => {
+      if (this.lanes.get(chore) === tail) this.lanes.delete(chore);
+    });
+    this.lanes.set(chore, tail);
   }
 
   pending() {
@@ -48,7 +56,7 @@ export class JobQueue extends EventEmitter {
   }
 
   async drain() {
-    await Promise.all([...this.lanes.values()]);
+    while (this.lanes.size) await Promise.all([...this.lanes.values()]);
   }
 
   trim() {

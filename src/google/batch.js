@@ -4,26 +4,7 @@
 import { randomBytes } from 'node:crypto';
 import { RETRIES, googleError, rateLimited, repeatable } from './auth.js';
 
-/** Run `fn` over `items` with at most `limit` in flight. */
-export async function pool(items, limit, fn) {
-  const out = new Array(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) {
-        const i = next++;
-        out[i] = await fn(items[i], i);
-      }
-    }),
-  );
-  return out;
-}
-
-export function chunks(items, size) {
-  const out = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-}
+export { mapLimit as pool, chunks } from '../core/async.js';
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 

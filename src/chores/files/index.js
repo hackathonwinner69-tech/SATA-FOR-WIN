@@ -6,6 +6,7 @@ import { constants, createReadStream } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { dirname, extname, join, resolve } from 'node:path';
 import { assertNotSymlink, assertPlainFile, cleanLine, withinReal } from '../../core/safety.js';
+import { mapLimit } from '../../core/async.js';
 import { moveAllBack, safeMove } from '../../core/fsx.js';
 
 export const TRASH_DIR = '.chorecade-trash';
@@ -55,20 +56,6 @@ function hashFile(path) {
       .on('end', () => resolve(h.digest('hex')))
       .on('error', reject);
   });
-}
-
-/** `fn` over `items` with at most `limit` calls in flight, results in input order. */
-async function mapLimit(items, limit, fn) {
-  const results = new Array(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
 }
 
 /** Label a pack from its first file: "WhatsApp Image 2026-01-11 at 9.10.jpeg" -> "WhatsApp Image at (*.jpeg)" */

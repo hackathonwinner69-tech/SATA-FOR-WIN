@@ -47,7 +47,7 @@ export default async function play(ctx) {
   // Sprite pixel size follows the screen so the actors read on a laptop and a big monitor alike.
   const px = () => clamp(Math.min(view.w, view.h * 1.4) / 240, 3, 5);
   let crates = [];
-  let bunnies = [];
+  const bunnies = [];
   let score = 0;
   let streak = 0;
   let streakTimer = 0;

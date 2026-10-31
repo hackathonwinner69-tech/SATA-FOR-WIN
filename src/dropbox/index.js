@@ -1,5 +1,6 @@
 // Dropbox in the arcade: once signed in, one Dropbox folder becomes a Folder
 // Frenzy cabinet.
+import { httpError, jsonRoute } from '../core/http.js';
 import { createFilesChore } from '../chores/files/index.js';
 import { cleanLine } from '../core/safety.js';
 import { APPS_URL } from './auth.js';
@@ -23,21 +24,17 @@ export function mountDropbox({ app, api, arcade, auth, port, options }) {
 
   api.get('/dropbox', (req, res) => res.json(auth.status()));
 
-  api.post('/dropbox/connect', (req, res) => {
-    try {
-      if (auth.connected) throw Object.assign(new Error('already connected to Dropbox; disconnect first to switch account'), { status: 409 });
-      res.json({ url: auth.authUrl(redirectUri) });
-    } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message });
-    }
-  });
+  api.post('/dropbox/connect', jsonRoute(() => {
+    if (auth.connected) throw httpError(409, 'already connected to Dropbox; disconnect first to switch account');
+    return { url: auth.authUrl(redirectUri) };
+  }));
 
-  api.post('/dropbox/disconnect', async (req, res) => {
+  api.post('/dropbox/disconnect', jsonRoute(async () => {
     const { revoked } = await auth.disconnect();
     arcade.removeChore(DROPBOX_CHORE);
     const warning = revoked ? undefined : `Signed out here, but Dropbox did not confirm it removed ChoreCade's access. Remove it at ${CONNECTED_APPS_URL}`;
-    res.json({ ...auth.status(), revoked, warning });
-  });
+    return { ...auth.status(), revoked, warning };
+  }));
 
   // Dropbox sends the browser back here. Not token-guarded (it is a top-level
   // navigation from Dropbox), but it only succeeds with a state we issued. It

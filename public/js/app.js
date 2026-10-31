@@ -1,7 +1,9 @@
 // The arcade floor: the backlog, the ledger, and launching games.
 import { api, fmt, listen } from './api.js';
 import { spriteSvg } from './sprites.js';
-import { overlay } from '../games/kit.js';
+import { createAccounts, G_LOGO } from './accounts.js';
+import { setupTour } from './tour.js';
+import { esc, overlay } from '../games/kit.js';
 
 export const CABINETS = {
   invaders: {
@@ -49,298 +51,13 @@ export function describeImpact(impact = {}) {
 }
 
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 let state = null;
-let google = { configured: false, connected: false, email: null };
-
-// Feature Tour
-let tourStep = 0;
-let currentHighlights = [];
-let isTourOpen = false;
-let isAnimating = false;
-
-function clearHighlights() {
-  currentHighlights.forEach(el => {
-    if (el && el.classList) {
-      el.classList.remove('tour-highlighted');
-    }
-  });
-  currentHighlights = [];
-}
-
-function showTourStep(step) {
-  if (isAnimating) return;
-  isAnimating = true;
-
-  const tourSteps = document.querySelectorAll('.tour-step');
-  if (!tourSteps.length) {
-    isAnimating = false;
-    return;
-  }
-
-  tourSteps.forEach((s, i) => {
-    s.classList.toggle('hidden', i !== step);
-  });
-
-  const stepData = tourSteps[step];
-  const targetSelector = stepData.querySelector('.tour-highlight')?.dataset.target;
-
-  // Clear previous highlights
-  clearHighlights();
-
-  // Add new highlight if target exists
-  if (targetSelector) {
-    setTimeout(() => {
-      try {
-        const targets = document.querySelectorAll(targetSelector);
-        if (targets.length > 0) {
-          targets.forEach(t => {
-            if (t) {
-              t.classList.add('tour-highlighted');
-              currentHighlights.push(t);
-            }
-          });
-        }
-      } catch (e) {
-        console.warn('Tour highlight error:', e);
-      }
-      isAnimating = false;
-    }, 150);
-  } else {
-    isAnimating = false;
-  }
-
-  const tourStepNum = $('tour-step-num');
-  const tourTotal = $('tour-total');
-  const tourPrev = $('tour-prev');
-  const tourNext = $('tour-next');
-  const tourTitle = $('tour-title');
-
-  if (tourStepNum) tourStepNum.textContent = step + 1;
-  if (tourTotal) tourTotal.textContent = tourSteps.length;
-  if (tourPrev) tourPrev.disabled = step === 0;
-  if (tourNext) tourNext.textContent = step === tourSteps.length - 1 ? 'Finish' : 'Next →';
-
-  // Update title based on step
-  const titles = [
-    'Welcome to ChoreCade!',
-    'The Game Cabinets',
-    'Progress Tracking',
-    'The Ledger',
-    'Google Integration',
-    'The Four Games',
-    'You\'re Ready!'
-  ];
-  if (tourTitle) tourTitle.textContent = titles[step];
-}
-
-function startTour() {
-  if (isTourOpen) return;
-  isTourOpen = true;
-  tourStep = 0;
-  isAnimating = false;
-
-  const tourOverlay = $('tour-overlay');
-  if (tourOverlay) {
-    tourOverlay.classList.remove('hidden');
-    document.body.classList.add('tour-open');
-
-    // Wait for overlay to be visible before showing step
-    requestAnimationFrame(() => {
-      setTimeout(() => {
-        showTourStep(0);
-        const tourClose = $('tour-close');
-        if (tourClose) tourClose.focus();
-      }, 150);
-    });
-  }
-}
-
-function closeTour() {
-  if (!isTourOpen) return;
-  isTourOpen = false;
-  isAnimating = false;
-  clearHighlights();
-
-  const tourOverlay = $('tour-overlay');
-  if (tourOverlay) {
-    tourOverlay.classList.add('hidden');
-    document.body.classList.remove('tour-open');
-  }
-
-  const tourBtn = $('tour-btn');
-  if (tourBtn) {
-    setTimeout(() => tourBtn.focus(), 150);
-  }
-}
-
-function nextTourStep() {
-  if (isAnimating) return;
-  const tourSteps = document.querySelectorAll('.tour-step');
-  if (tourStep < tourSteps.length - 1) {
-    tourStep++;
-    showTourStep(tourStep);
-  } else {
-    closeTour();
-  }
-}
-
-function prevTourStep() {
-  if (isAnimating) return;
-  if (tourStep > 0) {
-    tourStep--;
-    showTourStep(tourStep);
-  }
-}
-
-// Tour event listeners (will be attached after DOM is ready)
-function setupTourListeners() {
-  const tourBtn = $('tour-btn');
-  const tourClose = $('tour-close');
-  const tourNext = $('tour-next');
-  const tourPrev = $('tour-prev');
-
-  if (tourBtn) tourBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    startTour();
-  });
-  if (tourClose) tourClose.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    closeTour();
-  });
-  if (tourNext) tourNext.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    nextTourStep();
-  });
-  if (tourPrev) tourPrev.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    prevTourStep();
-  });
-
-  // Close tour when clicking outside the card
-  const tourOverlay = $('tour-overlay');
-  const tourCard = $('tour-card');
-  if (tourOverlay && tourCard) {
-    tourOverlay.addEventListener('click', (e) => {
-      if (e.target === tourOverlay || e.target.classList.contains('tour-backdrop')) {
-        closeTour();
-      }
-    });
-  }
-}
-
-// Keyboard navigation for tour
-document.addEventListener('keydown', (e) => {
-  const tourOverlay = $('tour-overlay');
-  if (tourOverlay && !tourOverlay.classList.contains('hidden')) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      closeTour();
-    } else if (e.key === 'ArrowRight' || e.key === 'Enter') {
-      e.preventDefault();
-      nextTourStep();
-    } else if (e.key === 'ArrowLeft') {
-      e.preventDefault();
-      prevTourStep();
-    }
-  }
-});
-
-const G_LOGO = '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.4 30.2 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.8 6C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4 7.1-10 7.1-17.5z"/><path fill="#FBBC05" d="M10.5 28.7a14.5 14.5 0 0 1 0-9.4l-7.8-6a24 24 0 0 0 0 21.4l7.8-6z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.9 2.3-8.4 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.8 6C6.6 42.6 14.6 48 24 48z"/></svg>';
-
-async function refreshGoogle() {
-  try {
-    google = await api('/google');
-  } catch {
-    return;
-  }
-  const slot = $('google-slot');
-  if (google.connected) {
-    slot.innerHTML = `<span class="chip g-chip">${G_LOGO}<span>${esc(google.email ?? 'Google')}</span></span> <button class="btn quiet" type="button" id="g-out">Sign out</button>`;
-    $('g-out').addEventListener('click', async () => {
-      let result;
-      try {
-        result = await api('/google/disconnect', { method: 'POST' });
-      } catch (err) {
-        showNotice(`Could not sign out of Google: ${err.message}`);
-        return;
-      }
-      announce('Signed out of Google. Gmail and Drive cabinets removed.');
-      if (result.warning) showNotice(result.warning);
-      await refreshGoogle();
-      if (!result.warning) $('g-in')?.focus();
-    });
-  } else {
-    slot.innerHTML = `<button class="btn quiet g-btn" type="button" id="g-in">${G_LOGO}<span>Sign in with Google</span></button>`;
-    $('g-in').addEventListener('click', async () => {
-      if (!google.configured) {
-        showNotice('Google sign-in needs a Google Cloud OAuth client. Copy .env.example to .env, add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, and restart. The README walks through it in two minutes.');
-        return;
-      }
-      try {
-        const { url } = await api('/google/connect', { method: 'POST' });
-        location.assign(url);
-      } catch (err) {
-        showNotice(`Could not start Google sign-in: ${err.message}`);
-        refreshGoogle();
-      }
-    });
-  }
+const accounts = createAccounts({ showNotice, announce, onChange: () => {
   if (!current && state) renderMachines();
-}
+} });
+const { refreshGoogle, refreshDropbox } = accounts;
 
-let dropbox = { configured: false, connected: false, email: null };
-
-const D_LOGO = '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 43 40"><path fill="#0061FF" d="M12.5 0 0 8.1 8.7 15l12.5-7.8L12.5 0zM0 21.9l12.5 8.2 8.7-7.3-12.5-7.8L0 21.9zm21.2.9 8.7 7.3 12.5-8.2-8.7-6.9-12.5 7.8zM42.4 8.1 29.9 0l-8.7 7.2L33.7 15l8.7-6.9zM21.3 24.4l-8.8 7.3-3.7-2.5v2.8l12.5 7.5 12.5-7.5v-2.8l-3.7 2.5-8.8-7.3z"/></svg>';
-
-async function refreshDropbox() {
-  try {
-    dropbox = await api('/dropbox');
-  } catch {
-    return;
-  }
-  const slot = $('dropbox-slot');
-  // Signing out also refreshes from the event stream; re-rendering the same state would drop the focus moved to the button.
-  const shown = JSON.stringify(dropbox);
-  if (slot.dataset.shown === shown) return;
-  slot.dataset.shown = shown;
-  if (dropbox.connected) {
-    slot.innerHTML = `<span class="chip g-chip">${D_LOGO}<span>${esc(dropbox.email ?? 'Dropbox')}</span></span> <button class="btn quiet" type="button" id="d-out">Disconnect</button>`;
-    $('d-out').addEventListener('click', async () => {
-      let result;
-      try {
-        result = await api('/dropbox/disconnect', { method: 'POST' });
-      } catch (err) {
-        showNotice(`Could not disconnect Dropbox: ${err.message}`);
-        return;
-      }
-      announce('Disconnected Dropbox. Its cabinet was removed.');
-      if (result.warning) showNotice(result.warning);
-      await refreshDropbox();
-      if (!result.warning) $('d-in')?.focus();
-    });
-  } else {
-    slot.innerHTML = `<button class="btn quiet g-btn" type="button" id="d-in">${D_LOGO}<span>Connect Dropbox</span></button>`;
-    $('d-in').addEventListener('click', async () => {
-      if (!dropbox.configured) {
-        showNotice('Dropbox needs an app key. Create an app at dropbox.com/developers/apps, copy .env.example to .env, set DROPBOX_APP_KEY, and restart. The README walks through it.');
-        return;
-      }
-      try {
-        const { url } = await api('/dropbox/connect', { method: 'POST' });
-        location.assign(url);
-      } catch (err) {
-        showNotice(`Could not start Dropbox sign-in: ${err.message}`);
-        refreshDropbox();
-      }
-    });
-  }
-}
 function showNotice(text, focus = true) {
   const el = $('notice');
   el.textContent = text;
@@ -424,7 +141,7 @@ function renderMachines() {
       const pct = b?.baseline ? Math.round((handled / b.baseline) * 100) : 0;
       const impact = describeImpact(c.impact);
       const real = c.remote ? '<span class="tag warn">your real account</span>' : '';
-      const exportBtn = c.game === 'blocks' && google.connected ? `<button class="btn quiet" type="button" data-sheets="${c.id}">${G_LOGO} Export to Sheets</button>` : '';
+      const exportBtn = c.game === 'blocks' && accounts.google.connected ? `<button class="btn quiet" type="button" data-sheets="${c.id}">${G_LOGO} Export to Sheets</button>` : '';
       return `<li class="machine" style="--accent:${meta.accent}" aria-labelledby="m-${c.id}">
         <div class="art">${spriteSvg(c.game, { size: 52 })}</div>
         <div>
@@ -717,17 +434,7 @@ async function boot() {
     if (e.key === 'Escape' && current) exit();
   });
 
-  // Setup tour listeners
-  setupTourListeners();
-
-  // Show tour automatically (comment out the localStorage check to always show)
-  // const hasSeenTour = localStorage.getItem('chorecade-tour-seen');
-  // if (!hasSeenTour) {
-    setTimeout(() => {
-      startTour();
-      // localStorage.setItem('chorecade-tour-seen', 'true');
-    }, 500);
-  // }
+  setupTour();
 }
 
 boot().catch((err) => {
