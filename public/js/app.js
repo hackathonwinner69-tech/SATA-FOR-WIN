@@ -15,10 +15,11 @@ export const CABINETS = {
     what: 'Grab crates of look-alike files and run them to the right bin before the dust bunnies catch you.',
     toasts: 'bottom-left',
   },
-  receipts: {
+  blocks: {
     accent: '#0f7a54',
-    module: '/games/receipts.js',
-    what: 'Each merchant is a monster. Choose FILE, FLAG or SPARE on your turn (that choice files its charges for real), then dodge its attack.',
+    module: '/games/blocks.js',
+    what: 'Each merchant falls as a block. Steer it into a category column to file its charges for real, and watch the columns grow into a chart of your spending. Flag the red ones.',
+    toasts: 'bottom-right',
   },
   dungeon: {
     accent: '#9b3d78',
@@ -96,6 +97,53 @@ async function refreshGoogle() {
   if (!current && state) renderMachines();
 }
 
+let dropbox = { configured: false, connected: false, email: null };
+
+const D_LOGO = '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 43 40"><path fill="#0061FF" d="M12.5 0 0 8.1 8.7 15l12.5-7.8L12.5 0zM0 21.9l12.5 8.2 8.7-7.3-12.5-7.8L0 21.9zm21.2.9 8.7 7.3 12.5-8.2-8.7-6.9-12.5 7.8zM42.4 8.1 29.9 0l-8.7 7.2L33.7 15l8.7-6.9zM21.3 24.4l-8.8 7.3-3.7-2.5v2.8l12.5 7.5 12.5-7.5v-2.8l-3.7 2.5-8.8-7.3z"/></svg>';
+
+async function refreshDropbox() {
+  try {
+    dropbox = await api('/dropbox');
+  } catch {
+    return;
+  }
+  const slot = $('dropbox-slot');
+  // Signing out also refreshes from the event stream; re-rendering the same state would drop the focus moved to the button.
+  const shown = JSON.stringify(dropbox);
+  if (slot.dataset.shown === shown) return;
+  slot.dataset.shown = shown;
+  if (dropbox.connected) {
+    slot.innerHTML = `<span class="chip g-chip">${D_LOGO}<span>${esc(dropbox.email ?? 'Dropbox')}</span></span> <button class="btn quiet" type="button" id="d-out">Disconnect</button>`;
+    $('d-out').addEventListener('click', async () => {
+      let result;
+      try {
+        result = await api('/dropbox/disconnect', { method: 'POST' });
+      } catch (err) {
+        showNotice(`Could not disconnect Dropbox: ${err.message}`);
+        return;
+      }
+      announce('Disconnected Dropbox. Its cabinet was removed.');
+      if (result.warning) showNotice(result.warning);
+      await refreshDropbox();
+      if (!result.warning) $('d-in')?.focus();
+    });
+  } else {
+    slot.innerHTML = `<button class="btn quiet g-btn" type="button" id="d-in">${D_LOGO}<span>Connect Dropbox</span></button>`;
+    $('d-in').addEventListener('click', async () => {
+      if (!dropbox.configured) {
+        showNotice('Dropbox needs an app key. Create an app at dropbox.com/developers/apps, copy .env.example to .env, set DROPBOX_APP_KEY, and restart. The README walks through it.');
+        return;
+      }
+      try {
+        const { url } = await api('/dropbox/connect', { method: 'POST' });
+        location.assign(url);
+      } catch (err) {
+        showNotice(`Could not start Dropbox sign-in: ${err.message}`);
+        refreshDropbox();
+      }
+    });
+  }
+}
 function showNotice(text, focus = true) {
   const el = $('notice');
   el.textContent = text;
@@ -179,7 +227,7 @@ function renderMachines() {
       const pct = b?.baseline ? Math.round((handled / b.baseline) * 100) : 0;
       const impact = describeImpact(c.impact);
       const real = c.remote ? '<span class="tag warn">your real account</span>' : '';
-      const exportBtn = c.game === 'receipts' && google.connected ? `<button class="btn quiet" type="button" data-sheets="${c.id}">${G_LOGO} Export to Sheets</button>` : '';
+      const exportBtn = c.game === 'blocks' && google.connected ? `<button class="btn quiet" type="button" data-sheets="${c.id}">${G_LOGO} Export to Sheets</button>` : '';
       return `<li class="machine" style="--accent:${meta.accent}" aria-labelledby="m-${c.id}">
         <div class="art">${spriteSvg(c.game, { size: 52 })}</div>
         <div>
@@ -380,12 +428,14 @@ async function undo(entry) {
 function onEvent(event) {
   if (event.type === 'hello' || event.type === 'state') {
     const backlogs = new Map((state?.chores ?? []).map((c) => [c.id, c.backlog]));
-    const hadRemote = state?.chores.some((c) => c.remote);
+    const remoteBefore = (state?.chores ?? []).filter((c) => c.remote).map((c) => c.id);
     state = event.state;
     for (const c of state.chores) c.backlog ??= backlogs.get(c.id) ?? null;
     if (event.type === 'hello') countAll();
-    // The Google cabinets also go when Google revokes the sign-in, so the masthead is refreshed with them.
-    if (event.type === 'hello' || (hadRemote && !state.chores.some((c) => c.remote))) refreshGoogle();
+    // Remote cabinets also go when Google or Dropbox revokes the sign-in, so the masthead is refreshed with them.
+    const gone = remoteBefore.filter((id) => !state.chores.some((c) => c.id === id));
+    if (event.type === 'hello' || gone.some((id) => id !== 'dropbox')) refreshGoogle();
+    if (event.type === 'hello' || gone.includes('dropbox')) refreshDropbox();
     if (!current) renderMachines();
     // Entries can arrive before the chores they belong to, so their chore names are filled in now.
     for (const entry of ledger.values()) renderLedgerEntry(entry);
@@ -452,6 +502,15 @@ async function boot() {
     const skipped = (params.get('skipped') ?? '').split(',').filter(Boolean).sort().join(',');
     history.replaceState(null, '', '/');
     showNotice(outcome === 'connected' ? (SIGNED_IN[skipped] ?? SIGNED_IN['']) : 'Google sign-in was cancelled.');
+  }
+  if (params.has('dropbox')) {
+    const connected = params.get('dropbox') === 'connected';
+    history.replaceState(null, '', '/');
+    showNotice(
+      connected
+        ? 'Connected to Dropbox. Your Dropbox folder is now the Folder Frenzy: Dropbox cabinet below. It is your real account: every move is journaled and undoable, and Trash is a ChoreCade Trash folder, so nothing is deleted.'
+        : 'Dropbox sign-in was cancelled.',
+    );
   }
   listen(onEvent);
   $('exit').addEventListener('click', exit);

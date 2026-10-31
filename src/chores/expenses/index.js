@@ -1,4 +1,4 @@
-// Expense review. A bank export becomes a deck of merchant cards; each card you
+// Expense review. A bank export becomes one group per merchant; each group you
 // play files every transaction from that merchant into a category, and the
 // categorised CSV, the report and the rules for next month are rewritten on
 // the spot.
@@ -174,6 +174,16 @@ export function createExpensesChore({ csvPath, outDir, dryRun = false }) {
     }
   }
 
+  /** Money filed so far per category, e.g. { Food: -120.5 }. */
+  function filedTotals() {
+    const totals = {};
+    for (const t of data.txns) {
+      const cat = assignments[t.row]?.category;
+      if (cat) totals[cat] = Math.round(((totals[cat] ?? 0) + t.amount) * 100) / 100;
+    }
+    return totals;
+  }
+
   async function checkOutputs() {
     for (const path of Object.values(out)) await assertNotSymlink(path);
   }
@@ -234,9 +244,9 @@ export function createExpensesChore({ csvPath, outDir, dryRun = false }) {
 
   return {
     id: 'expenses',
-    title: 'Receipt Rush',
+    title: 'Budget Blocks',
     chore: 'Review your expenses',
-    game: 'receipts',
+    game: 'blocks',
     unit: 'unfiled transactions',
     target: csvPath,
     actions: [...CATEGORIES.map((c) => ({ id: `cat:${c.id}`, label: c.id, key: c.key, color: c.color })), { id: 'flag', label: 'Flag for review', key: 'F', color: '#ef4444' }],
@@ -247,11 +257,7 @@ export function createExpensesChore({ csvPath, outDir, dryRun = false }) {
       if (!data) await this.scan();
       const header = [...data.header, 'Category', 'Needs review'];
       const rows = data.rows.map((r, i) => [...r, assignments[i]?.category ?? '', assignments[i]?.flagged ? 'yes' : '']);
-      const totals = {};
-      for (const t of data.txns) {
-        const cat = assignments[t.row]?.category;
-        if (cat) totals[cat] = Math.round(((totals[cat] ?? 0) + t.amount) * 100) / 100;
-      }
+      const totals = filedTotals();
       return {
         title: `ChoreCade expenses: ${basename(csvPath)}`,
         tabs: [
@@ -269,7 +275,15 @@ export function createExpensesChore({ csvPath, outDir, dryRun = false }) {
       const groups = groupByMerchant(open, rules);
       return {
         groups,
-        stats: { transactions: data.txns.length, skipped: data.skipped, open: open.length, remaining: open.length, merchants: groups.length, spend: Math.round(data.txns.reduce((s, t) => s + Math.min(t.amount, 0), 0)) },
+        stats: {
+          transactions: data.txns.length,
+          skipped: data.skipped,
+          open: open.length,
+          remaining: open.length,
+          merchants: groups.length,
+          spend: Math.round(data.txns.reduce((s, t) => s + Math.min(t.amount, 0), 0)),
+          filed: filedTotals(),
+        },
       };
     },
 

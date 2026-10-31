@@ -96,6 +96,7 @@ test('expenses: merchants grouped, outputs written, undo un-files', async () => 
   const chore = createExpensesChore({ csvPath, outDir });
   const { groups, stats } = await chore.scan();
   assert.ok(stats.transactions > 250);
+  assert.deepEqual(stats.filed, {});
   const netflix = groups.find((g) => g.label.startsWith('NETFLIX'));
   assert.equal(netflix.suggestion, 'cat:Subscriptions');
   assert.ok(netflix.flags.includes('recurring'));
@@ -109,10 +110,14 @@ test('expenses: merchants grouped, outputs written, undo un-files', async () => 
   assert.match(await readFile(chore.outputs.report, 'utf8'), /Subscriptions \(-\$15\.49 a month/);
   assert.equal(JSON.parse(await readFile(chore.outputs.rules, 'utf8'))[netflix.label], 'Subscriptions');
 
-  // Filed merchants drop out of the next scan.
-  assert.ok(!(await chore.scan()).groups.some((g) => g.id === netflix.id));
+  // Filed merchants drop out of the next scan, and their money counts as filed.
+  const filed = await chore.scan();
+  assert.ok(!filed.groups.some((g) => g.id === netflix.id));
+  assert.deepEqual(filed.stats.filed, { Subscriptions: netflix.total });
   await chore.undo(r.undo);
-  assert.ok((await chore.scan()).groups.some((g) => g.id === netflix.id));
+  const undone = await chore.scan();
+  assert.ok(undone.groups.some((g) => g.id === netflix.id));
+  assert.deepEqual(undone.stats.filed, {});
 });
 
 test('expenses: merchant names normalise across card noise', () => {

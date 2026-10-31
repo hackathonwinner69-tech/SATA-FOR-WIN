@@ -584,6 +584,12 @@ kbd {
   left: 14px;
   bottom: 14px;
 }
+/* Budget Blocks keeps its next-up queue top right; the slips print below the side panel instead */
+.stage[data-toasts='bottom-right'] .toasts {
+  top: auto;
+  bottom: 14px;
+  max-width: min(250px, calc(100% - 28px));
+}
 .toast {
   background: var(--card);
   color: var(--ink);
