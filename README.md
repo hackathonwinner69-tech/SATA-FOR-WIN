@@ -3,8 +3,8 @@
 **Play a game. Finish a real chore.**
 
 ChoreCade is an arcade where every move you make does a real chore in the background. Shoot down an invader and 400
-emails from one sender are archived. Run a crate to the Images door and 46 screenshots move into `Images/`. Choose
-FILE when a coffee shop monster attacks and a year of coffee purchases is filed under Food. Beam a crawler in the
+emails from one sender are archived. Run a crate to the Images door and 46 screenshots move into `Images/`. Drop a
+coffee-shop block into the Food column and a year of coffee purchases is filed there. Beam a crawler in the
 castle and ESLint fixes `no-var` across your whole project. Sign in with Google and the same games work on your real Gmail and Drive.
 
 We all put off the same digital chores: 5,000 unread emails, a Downloads folder nobody can look at, expenses nobody has
@@ -30,8 +30,8 @@ year of bank transactions and a small JavaScript app full of lint, and plays aga
 | Inbox Invaders | Folder Frenzy |
 | --- | --- |
 | ![Inbox Invaders: one ship per sender, labelled with how much mail it sent, and the Archive, Trash, Unsub and Keep weapons](docs/screenshots/inbox-invaders.png) | ![Folder Frenzy: the courier robot, crates of look-alike files and bin doors on the arena walls](docs/screenshots/folder-frenzy.png) |
-| **Receipt Rush** | **Lint Dungeon** |
-| ![Receipt Rush: the payroll merchant as a monster, with the FILE, CHECK, FLAG and SPARE choices](docs/screenshots/receipt-rush.png) | ![Lint Dungeon: a no-var crawler in the castle, with the Fix Beam, Hush Whip and Quest Scroll](docs/screenshots/lint-dungeon.png) |
+| **Budget Blocks** | **Lint Dungeon** |
+| ![Budget Blocks: a falling merchant block over ten category columns that grow into a live spending chart, with the next-up queue, hearts and power-ups alongside](docs/screenshots/budget-blocks.png) | ![Lint Dungeon: a no-var crawler in the castle, with the Fix Beam, Hush Whip and Quest Scroll](docs/screenshots/lint-dungeon.png) |
 
 ## The cabinets
 
@@ -39,7 +39,7 @@ year of bank transactions and a small JavaScript app full of lint, and plays aga
 | --- | --- | --- |
 | **Inbox Invaders** | Triage 5,000 emails | A shooter. Each ship is one **sender**; its hull grows with how much mail it sent. Archive laser, trash torpedo, unsubscribe EMP or keep beam: a hit moves every email from that sender. Smart bombs apply ChoreCade's pick to every low-risk ship in view. People are shielded gold ships: the first trash or unsubscribe hit drops the shield, and only a second, separate press of fire confirms it. |
 | **Folder Frenzy** | Sort a messy folder | An arena courier game. You drive a robot, pick up crates of look-alike files (`Screenshot … (*.png)` ×46) and run them to bin doors on the walls; a delivery moves the files. Dust bunnies chase you and knock crates loose, and a dropped crate changes nothing. Exact duplicates are red crates found by hash. |
-| **Receipt Rush** | Review expenses | Turn-based encounters in the Undertale tradition. Each **merchant** is a monster grown from its name. On your turn choose FILE (pick a category; the suggestion is starred), CHECK, FLAG or SPARE, and that choice is the real action. Then the merchant attacks and you dodge inside the bullet box: subscriptions spiral, big or duplicate charges fall like boulders, regulars rain coins. The categorised CSV, `expense-report.md` and `merchant-rules.json` are rewritten as you play. |
+| **Budget Blocks** | Review expenses | A falling-block game that doubles as a live chart. Each **merchant** falls as a block over ten category columns: steer it with the arrows, the number keys or a tap, and where it lands is where its charges are really filed. The glowing column is ChoreCade's guess and scores double; red blocks (possible duplicates or large charges) should be flagged for review instead. A block nobody steers files nothing, comes back later and costs a heart. Combos, a hold slot and slow-mo, autopilot, piggy-bank and payday power-ups keep the queue moving while the columns grow into a bar chart of your spending. The categorised CSV, `expense-report.md` and `merchant-rules.json` are rewritten as you play. |
 | **Lint Dungeon** | Fix lint errors | A side-scrolling castle crawl in the Metroidvania tradition. Each **lint rule** is a foe: big rules are bosses, fixable ones crawl, the rest fly. Three weapons, three real actions: the Fix Beam runs ESLint's autofix for that rule (and only hurts foes ESLint can fix), the Hush Whip adds marked disable comments, the Quest Scroll writes it to `LINT_QUESTLOG.md`. Whip candles for hearts; the exit door opens when the floor is clear, and the next floor is a fresh lint pass. |
 
 All characters, sprites and levels are original. The games borrow genre mechanics (bullet boxes, whips and beams, locked
@@ -59,7 +59,7 @@ Games are fast; chores are big. To close that gap, each move works on a **group*
 - 301 transactions come from 27 merchants.
 - 47 lint problems come from 12 rules.
 
-Every group arrives with a suggestion (the ring around a ship, the lit door, the starred gate), so most moves are a quick
+Every group arrives with a suggestion (the ring around a ship, the lit door, the glowing column), so most moves are a quick
 confirmation, and overruling the suggestion is just as fast.
 
 ## Google services
@@ -67,11 +67,13 @@ confirmation, and overruling the suggestion is just as fast.
 Sign in with Google from the masthead and two new cabinets appear, tagged **your real account**:
 
 - **Inbox Invaders: Gmail.** Your real inbox through the Gmail API. Only headers are read (`format=metadata`), never
-  bodies. Archive removes the `INBOX` label (in batches of 1,000); trash uses Gmail's Trash, which keeps mail for 30 days.
-  Both can be undone from the ledger.
+  bodies. Header fetches are batched (50 per request) and cached, and a token bucket paces calls under Gmail's
+  per-minute quota. The first senders show within seconds while the rest of the inbox keeps loading in the background,
+  and the game says how much is still being read. Archive removes the `INBOX` label (in batches of 1,000); trash uses
+  Gmail's Trash, which keeps mail for 30 days. Both can be undone from the ledger.
 - **Folder Frenzy: Drive.** A Drive folder (My Drive by default, `--drive-folder <id>` for another). Duplicates are found
-  from Drive's `md5Checksum` without downloading anything; bin folders are created on demand; trash is Drive's trash.
-  Moves can be undone.
+  from Drive's `md5Checksum` without downloading anything; bin folders are created on demand; trash is Drive's trash,
+  and moves go to the API in batches. Moves can be undone.
 - **Export to Google Sheets.** The expenses cabinet gets an Export button that writes every transaction, its category and
   the totals into a new Google Sheet.
 
@@ -94,16 +96,41 @@ sign-in, the Gmail and Drive cabinets go with it until you sign in again. Every 
 calls that create something (a Drive folder, a spreadsheet) are never retried after a server error, so they can't run
 twice. Sheets values are written `RAW`, so a merchant named `=IMPORTXML(…)` stays text and never becomes a formula.
 
+## Dropbox
+
+Connect Dropbox from the masthead and a **Folder Frenzy: Dropbox** cabinet appears, tagged **your real account**. It
+plays on one folder in your Dropbox (the root by default, `--dropbox-folder <path>` for another). Bin folders are
+created on demand, duplicates are found from Dropbox's `content_hash` without downloading anything, and Trash is a
+`ChoreCade Trash` folder, so nothing is ever deleted. Every move is journaled and undoable from the ledger.
+
+**Setup (about two minutes):**
+
+1. Create an app in the [Dropbox App Console](https://www.dropbox.com/developers/apps): **Scoped access**, then **Full
+   Dropbox** or **App folder** (an App folder app only ever sees its own folder).
+2. On the **Permissions** tab, enable `files.metadata.read` and `files.content.write` and submit (`account_info.read`
+   is always on).
+3. On the **Settings** tab, add the redirect URI `http://127.0.0.1:4747/oauth/dropbox/callback` (change the port if
+   you run with `--port`), and leave **Allow public clients (PKCE)** enabled.
+4. Copy the **App key** into `.env` as `DROPBOX_APP_KEY` (`cp .env.example .env` first; `.env` is git-ignored). There
+   is no app secret to copy: sign-in uses PKCE.
+5. Restart the arcade and click **Connect Dropbox**.
+
+Sign-in uses the OAuth 2.0 flow with PKCE, a one-time `state` and a loopback redirect to `127.0.0.1`. Only the token
+set is stored, in `.chorecade/dropbox-token.json`, owner-only. **Disconnect** revokes the grant at Dropbox and tells
+you if Dropbox didn't confirm it; you can also remove the app any time under [connected
+apps](https://www.dropbox.com/account/connected_apps). If Dropbox revokes the sign-in, the cabinet goes until you
+connect again.
+
 ## Safety model
 
 ChoreCade is allowed to move real mail and real files, so it's careful about it:
 
 - **Everything is undoable.** Every change goes into an append-only journal (`journal.jsonl`) along with what undo needs.
   The ledger beside the cabinets lists each change with an Undo button.
-- **Nothing is ever deleted.** "Trash" means Gmail's or Drive's trash, the mailbox's Trash folder, or a
-  `.chorecade-trash/` folder you can open.
-- **Only deliberate moves act.** A crate you never pick up changes nothing; a merchant is only filed when you choose FILE
-  or FLAG on your turn; a lint foe only changes code when you defeat it. Trashing or unsubscribing a person in Inbox
+- **Nothing is ever deleted.** "Trash" means Gmail's or Drive's trash, the mailbox's Trash folder, a
+  `.chorecade-trash/` folder on disk, or a `ChoreCade Trash` folder in Dropbox: all of them are folders you can open.
+- **Only deliberate moves act.** A crate you never pick up changes nothing; a merchant block is only filed where you steer
+  it (a block you never touch files nothing); a lint foe only changes code when you defeat it. Trashing or unsubscribing a person in Inbox
   Invaders takes two separate presses of fire, so holding the button down can't do it.
 - **Moves never overwrite.** If a name is already taken, the file lands as `name (2).ext` instead.
 - **Undo is all-or-nothing and won't clobber.** File moves are reversed only if every original spot is still free. A
@@ -144,7 +171,7 @@ ChoreCade is allowed to move real mail and real files, so it's careful about it:
 
 ## Play with your real stuff
 
-Point ChoreCade at the chores you want. Only those cabinets appear (plus Gmail and Drive once you sign in with Google).
+Point ChoreCade at the chores you want. Only those cabinets appear (plus Gmail and Drive once you sign in with Google, and Dropbox once you connect it).
 
 ```bash
 npm start -- --files ~/Downloads                 # sort a real folder (top-level files only)
@@ -186,7 +213,7 @@ flowchart LR
     A -. events .-> ES
   end
   C --> M[Mailbox: .eml, IMAP or Gmail API]
-  C --> F[Folder: local or Google Drive]
+  C --> F[Folder: local, Google Drive or Dropbox]
   C --> X[Bank CSV → CSV, report, rules, Google Sheets]
   C --> E[ESLint]
 ```
@@ -200,7 +227,7 @@ undo(undoData)         // reverses one apply, or refuses without changing anythi
 ```
 
 Sources plug in underneath: the inbox chore takes a provider (local `.eml`, IMAP or Gmail), and the folder chore takes a
-store (local folder or Google Drive). The game never waits on the work: `POST /act` returns `202` straight away, the
+store (local folder, Google Drive or Dropbox). The game never waits on the work: `POST /act` returns `202` straight away, the
 queue runs moves one at a time per chore, and Server-Sent Events stream `job`, `change` and `undo` events back to the HUD
 and the ledger.
 
@@ -215,13 +242,14 @@ src/
   chores/expenses/       CSV parsing, merchant normalising, report, rules, table for Sheets
   chores/lint/           per-rule ESLint fix, silence, quest log, snapshots
   google/                OAuth (PKCE), Gmail provider, Drive store, Sheets export, routes
+  dropbox/               OAuth (PKCE), Dropbox store, routes
   ai/advisor.js          optional Claude suggestions
 public/
   js/                    arcade floor, API client, pixel sprites
-  games/                 invaders, frenzy, receipts, dungeon, calm mode, shared kit
-  games/arena.js, platformer.js, encounter.js   DOM-free game logic, unit-tested in Node
+  games/                 invaders, frenzy, blocks, dungeon, calm mode, shared kit
+  games/arena.js, platformer.js, well.js      DOM-free game logic, unit-tested in Node
 scripts/seed-demo.js     deterministic demo sandbox
-test/                    108 tests: chores, undo, server guards, Google (fake API), game logic, advisor
+test/                    185 tests: chores, undo, server guards, Google and Dropbox (fake APIs), game logic, advisor
 ```
 
 No build step and no front-end framework: plain ES modules and `<canvas>`.
@@ -232,8 +260,8 @@ No build step and no front-end framework: plain ES modules and `<canvas>`.
 | --- | --- |
 | Problem statement alignment | Every game action is a real chore action (`chores/*/index.js` `apply`), run in the background by `core/queue.js` while you keep playing. Inbox, folder, expenses and lint, the four chores in the brief, locally and on Gmail and Drive. |
 | Security | `core/safety.js` (host, origin and token guards, path containment, symlink refusal), CSP in `server.js`, OAuth with PKCE and state in `google/auth.js`, RAW Sheets writes, no secrets on the command line, append-only journal with conservative undo. |
-| Testing | `npm test`: 108 `node:test` tests covering every chore's apply and undo, the server guards, Google flows against a fake API, the game logic and the advisor. CI on Linux and Windows. |
-| Efficiency | One move handles a whole group; mailbox headers come from the first 16 KB of each message (64 KB if they run long), in batches of 200; Gmail fetches headers only with a concurrency pool; Drive duplicates come from server checksums; no front-end build or framework. |
+| Testing | `npm test`: 185 `node:test` tests covering every chore's apply and undo, the server guards, Google and Dropbox flows against fake APIs, the game logic and the advisor. CI on Linux and Windows. |
+| Efficiency | One move handles a whole group; rescans are cached (folders by content hash, Gmail headers by message), so recounting thousands of items takes milliseconds; mailbox headers come from the first 16 KB of each message (64 KB if they run long), in batches of 200; IMAP reuses one connection instead of reconnecting per scan; Gmail batches header fetches and paces itself under the API quota, showing the first senders within seconds while the rest stream in; Drive moves are batched and duplicates come from server checksums; no front-end build or framework. |
 | Accessibility | Calm mode for every chore, live announcements, AA contrast, reduced motion, keyboard play throughout; see [Accessibility](#accessibility). |
 | Code quality | One small interface per chore, sources behind providers and stores, pure game logic split from rendering, ESLint clean, no build step. |
 
