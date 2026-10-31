@@ -20,81 +20,91 @@ const WEAPONS = [
 const COLOR = Object.fromEntries(WEAPONS.map((w) => [w.id, w.color]));
 const FLOORS = ['Entrance Hall', 'Clock Corridor', 'Flooded Archive', 'Inner Keep', 'Throne of Warnings'];
 
-const PAL = { k: '#1d1b16', c: '#2b59d9', d: '#1b3a99', s: '#f2c79a', y: '#f2b632', w: '#fffdf8', r: '#c7361d', g: '#17a673', p: '#9b3d78', e: '#ffe14d', o: '#e36a1c' };
-const ART = {
-  hero: [
-    '...kkkk...',
-    '..kcccck..',
-    '.kccsssck.',
-    '.kcskssk..',
-    '.kcsssssk.',
-    '..kyyyyyk.',
-    '.kcccccyk.',
-    'kccccccck.',
-    'kcwcccccck',
-    '.kccccccck',
-    '.kddddddk.',
-    '..kd..dk..',
-    '..kk..kk..',
-  ],
-  heroRun: [
-    '...kkkk...',
-    '..kcccck..',
-    '.kccsssck.',
-    '.kcskssk..',
-    '.kcsssssk.',
-    '..kyyyyyk.',
-    '.kcccccyk.',
-    'kccccccck.',
-    'kcwcccccck',
-    '.kccccccck',
-    '.kddddddk.',
-    '.kd....dk.',
-    'kk......kk',
-  ],
-  crawler: [
-    '..kkkkkk..',
-    '.kggggggk.',
-    'kgkggggkgk',
-    'kggggggggk',
-    '.kkkkkkkk.',
-    'k.k.kk.k.k',
-  ],
-  bat: [
-    'k....kk....k',
-    'kk..kppk..kk',
-    'kpk.kekek.pk',
-    'kppkppppkppk',
-    '.kpppkkpppk.',
-    '..kk....kk..',
-  ],
-  boss: [
-    '..k........k....',
-    '...k......k.....',
-    '....kkkkkk......',
-    '..kkppppppkk....',
-    '.kppekppekppk...',
-    'kpppppppppppk...',
-    'kppkkkkkkkppk...',
-    'kpppppppppppk...',
-    '.kpppppppppk....',
-    'k.kkkkkkkkk.k...',
-    '.k.k.k..k.k.k...',
-  ],
-  candle: ['.oo.', '.yy.', 'kwwk', 'kwwk', 'kwwk', 'kkkk'],
-  heart: ['.r.r.', 'rrrrr', 'rrrrr', '.rrr.', '..r..'],
+const INK = '#171626';
+const PALETTE = { paper: '#fff8e8', gold: '#ffd166', blue: '#4d75ec', skin: '#f2bd98', mint: '#56d6a4', plum: '#b66bdf' };
+const ellipse = (g, x, y, rx, ry, fill) => {
+  g.fillStyle = fill;
+  g.beginPath();
+  g.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+  g.fill();
 };
 
-function sprite(g, rows, x, y, { flip = false, tint = null } = {}) {
-  const w = rows[0].length;
-  rows.forEach((row, ry) => {
-    for (let rx = 0; rx < w; rx++) {
-      const c = row[flip ? w - 1 - rx : rx];
-      if (c === '.') continue;
-      g.fillStyle = tint && c !== 'k' && c !== 'e' ? tint : PAL[c];
-      g.fillRect(Math.round(x) + rx, Math.round(y) + ry, 1, 1);
-    }
-  });
+// Smooth canvas illustrations keep their shape when the viewport grows.
+function drawHero(g, x, y, face, running, t) {
+  g.save(); g.translate(Math.round(x + 4), Math.round(y + 12)); g.scale(face, 1);
+  const stride = running ? Math.sin(t * 18) * 2 : 0;
+  ellipse(g, 0, 1, 7, 2, 'rgba(0,0,0,.3)');
+  g.fillStyle = '#273885'; g.beginPath(); g.moveTo(-4, -11); g.lineTo(-9, -7); g.lineTo(-7, 0); g.lineTo(4, 0); g.lineTo(6, -8); g.closePath(); g.fill();
+  g.fillStyle = PALETTE.blue; g.beginPath(); g.moveTo(-5, -11); g.quadraticCurveTo(-8, -7, -5, -1); g.lineTo(5, -1); g.lineTo(4, -11); g.closePath(); g.fill();
+  g.fillStyle = PALETTE.gold; g.beginPath(); g.moveTo(-5, -10); g.lineTo(3, -9); g.lineTo(4, -7); g.lineTo(-4, -8); g.closePath(); g.fill();
+  g.fillStyle = PALETTE.skin; g.beginPath(); g.roundRect(-4, -19, 8, 8, 3); g.fill();
+  g.fillStyle = INK; g.beginPath(); g.roundRect(-5, -21, 10, 5, 2); g.fill();
+  g.fillStyle = PALETTE.gold; g.beginPath(); g.moveTo(-3, -21); g.lineTo(-1, -27); g.lineTo(1, -21); g.lineTo(4, -25); g.lineTo(4, -20); g.closePath(); g.fill();
+  ellipse(g, 1.5, -15, 0.8, 1, INK);
+  g.strokeStyle = '#b76c5b'; g.lineWidth = 0.7; g.beginPath(); g.arc(0, -13.5, 1.8, 0.2, 1.8); g.stroke();
+  g.fillStyle = '#d7b66a'; g.beginPath(); g.roundRect(-8, -11, 4, 5, 2); g.roundRect(3, -11, 4, 5, 2); g.fill();
+  g.fillStyle = INK; g.beginPath(); g.roundRect(-5 + stride, -2, 4, 4, 1.5); g.roundRect(1 - stride, -2, 4, 4, 1.5); g.fill();
+  g.restore();
+}
+
+function drawCrawler(g, x, y, t, tint) {
+  g.save(); g.translate(x + 5, y + 4 + Math.sin(t * 7) * 0.7);
+  ellipse(g, 0, 2, 7, 3, '#2b2331'); g.fillStyle = tint; g.beginPath(); g.ellipse(0, 0, 7, 4, 0, Math.PI, 0); g.fill();
+  g.strokeStyle = '#dcffe9'; g.lineWidth = 0.8;
+  for (const dx of [-3, 0, 3]) { g.beginPath(); g.moveTo(dx, -2); g.lineTo(dx + 1, 1); g.stroke(); }
+  for (const dx of [-5, -2, 2, 5]) { g.beginPath(); g.moveTo(dx, 2); g.lineTo(dx + (dx < 0 ? -2 : 2), 5 + Math.sin(t * 12 + dx) * 1.5); g.stroke(); }
+  ellipse(g, -2, -0.5, 0.8, 1.2, PALETTE.gold); ellipse(g, 2, -0.5, 0.8, 1.2, PALETTE.gold); g.restore();
+}
+
+function drawBat(g, x, y, t, tint) {
+  g.save(); g.translate(x + 6, y + 3); const flap = Math.sin(t * 11) * 3; g.fillStyle = tint;
+  g.beginPath(); g.moveTo(-2, 0); g.quadraticCurveTo(-7, -7 - flap, -12, -3); g.lineTo(-8, 4); g.lineTo(-3, 2); g.closePath(); g.fill();
+  g.beginPath(); g.moveTo(2, 0); g.quadraticCurveTo(7, -7 - flap, 12, -3); g.lineTo(8, 4); g.lineTo(3, 2); g.closePath(); g.fill();
+  ellipse(g, 0, 1, 4, 4, '#392546'); g.fillStyle = tint; g.beginPath(); g.moveTo(-3, -2); g.lineTo(-4, -7); g.lineTo(0, -4); g.lineTo(4, -7); g.lineTo(3, -2); g.fill();
+  ellipse(g, -1.4, 0, 0.7, 1, PALETTE.gold); ellipse(g, 1.4, 0, 0.7, 1, PALETTE.gold);
+  g.strokeStyle = '#f5b7e4'; g.lineWidth = 0.7; g.beginPath(); g.moveTo(-1, 5); g.lineTo(0, 7); g.lineTo(1, 5); g.stroke(); g.restore();
+}
+
+function drawBoss(g, x, y, t, tint) {
+  g.save(); g.translate(x + 6.5, y + 6); ellipse(g, 0, 6, 9, 2, 'rgba(0,0,0,.3)');
+  g.fillStyle = '#41304d'; g.beginPath(); g.roundRect(-8, -2, 16, 8, 4); g.fill();
+  g.fillStyle = tint; g.beginPath(); g.roundRect(-6, -9, 12, 14, 5); g.fill();
+  g.fillStyle = '#593350'; g.beginPath(); g.roundRect(-8, -8, 5, 7, 2); g.roundRect(3, -8, 5, 7, 2); g.fill();
+  g.fillStyle = '#e7bd73'; g.beginPath(); g.moveTo(-5, -8); g.lineTo(-7, -15); g.lineTo(-1, -11); g.lineTo(0, -17); g.lineTo(2, -11); g.lineTo(7, -15); g.lineTo(5, -8); g.closePath(); g.fill();
+  g.fillStyle = '#38233d'; g.beginPath(); g.roundRect(-5, -7, 10, 7, 3); g.fill();
+  ellipse(g, -2.2, -4, 1.1, 1.4, '#ff6f91'); ellipse(g, 2.2, -4, 1.1, 1.4, '#ff6f91');
+  ellipse(g, 0, 1, 2.3, 2.3, PALETTE.gold); ellipse(g, 0, 1, 1, 1, '#fff7bd');
+  g.strokeStyle = '#f7d9a5'; g.lineWidth = 1;
+  for (const side of [-1, 1]) { g.beginPath(); g.moveTo(side * 4, 3); g.lineTo(side * (5 + Math.sin(t * 5) * 0.5), 6); g.stroke(); } g.restore();
+}
+
+function drawCandle(g, x, y, t) {
+  g.fillStyle = '#d7c9b4'; g.beginPath(); g.roundRect(x, y + 2, 4, 5, 1); g.fill(); g.fillStyle = '#fff4cf'; g.fillRect(x + 1, y + 3, 1, 3);
+  g.fillStyle = '#ff9e57'; g.beginPath(); g.ellipse(x + 2, y + 0.5, 1 + Math.sin(t * 10) * 0.5, 2, 0, 0, Math.PI * 2); g.fill(); ellipse(g, x + 2, y, 0.6, 1.1, '#fff1a8');
+}
+
+function drawHeart(g, x, y) {
+  g.save(); g.translate(x + 2.5, y + 2.5); g.fillStyle = '#ff5876'; g.beginPath();
+  g.moveTo(0, 2.2); g.bezierCurveTo(-6, -1, -2, -4, 0, -1.6); g.bezierCurveTo(2, -4, 6, -1, 0, 2.2); g.fill();
+  ellipse(g, -1.1, -1.2, 0.8, 0.5, '#ffd7da'); g.restore();
+}
+
+function drawSigil(g, x, y, t) {
+  g.save(); g.translate(x + 5, y + 5 + Math.sin(t * 3 + x) * 1.5); g.rotate(t * 0.7); g.shadowColor = '#7ce8ff'; g.shadowBlur = 8;
+  g.fillStyle = '#50d5e8'; g.beginPath(); g.moveTo(0, -5); g.lineTo(4, -2); g.lineTo(3, 3); g.lineTo(0, 5); g.lineTo(-3, 3); g.lineTo(-4, -2); g.closePath(); g.fill();
+  g.shadowBlur = 0; g.strokeStyle = '#e5ffff'; g.lineWidth = 0.8; g.beginPath(); g.moveTo(0, -3); g.lineTo(0, 3); g.moveTo(-2, 0); g.lineTo(2, 0); g.stroke(); g.restore();
+}
+
+function drawGuide(g, x, floor, t) {
+  const y = GROUND * TILE;
+  g.save(); g.translate(x, y + Math.sin(t * 2.3) * 2); g.shadowColor = '#8cf5ef'; g.shadowBlur = 10;
+  ellipse(g, 0, 0, 7, 2, 'rgba(0,0,0,.25)');
+  g.fillStyle = '#67d7dc'; g.beginPath(); g.moveTo(-6, -15); g.quadraticCurveTo(-8, -26, 0, -27); g.quadraticCurveTo(8, -26, 6, -15); g.lineTo(7, -4); g.quadraticCurveTo(4, -7, 1, -3); g.quadraticCurveTo(-2, -8, -6, -3); g.closePath(); g.fill();
+  g.shadowBlur = 0; ellipse(g, -2, -20, 0.8, 1.4, '#173b54'); ellipse(g, 2, -20, 0.8, 1.4, '#173b54');
+  g.strokeStyle = '#d9ffff'; g.lineWidth = 1; g.beginPath(); g.arc(0, -17, 2, 0.2, 2.9); g.stroke();
+  ellipse(g, -8, -26, 1, 1, '#d9ffff'); ellipse(g, 9, -19, 0.8, 0.8, '#d9ffff');
+  g.restore();
+  g.fillStyle = '#d9ffff'; g.font = '600 5px "IBM Plex Mono", monospace'; g.textAlign = 'center'; g.fillText('LUMA · E', x, y - 34);
 }
 
 const SIZE = { crawler: { w: 10, h: 6 }, bat: { w: 12, h: 6 }, boss: { w: 13, h: 11 } };
@@ -116,12 +126,13 @@ export default async function play(ctx) {
 
   await intro(root, {
     title: 'LINT DUNGEON',
-    story: `${scan.stats.problems} problems haunt ${scan.stats.files} files. Every foe in this castle is one lint rule; the big ones are bosses. Green foes can be burned away with the Fix Beam, which really runs ESLint's fixer for that rule. Purple ones are immune and need the Hush Whip (a marked disable comment) or the Quest Scroll (written into LINT_QUESTLOG.md). A foe falls to one weapon, so finish with the one you started. Whip the candles for hearts. Clear the floor and the exit door opens.`,
+    story: `${scan.stats.problems} problems haunt ${scan.stats.files} files. Every foe in this castle is one lint rule; the big ones are bosses. Green foes can be burned away with the Fix Beam, which really runs ESLint's fixer for that rule. Purple ones are immune and need the Hush Whip (a marked disable comment) or the Quest Scroll (written into LINT_QUESTLOG.md). Climb high ledges to find hidden ward sigils and extra hearts. The castle grows more dangerous each floor, and the exit opens when its foes fall.`,
     keys: [
       ['← →', 'run'],
       ['Z / Space / ↑', 'jump (hold for higher)'],
       ['X / J', 'attack'],
       ['1 2 3 / C', 'Fix Beam · Hush Whip · Quest Scroll'],
+      ['E', 'talk to Luma near the entrance'],
     ],
     start: 'ENTER THE CASTLE',
   });
@@ -137,6 +148,7 @@ export default async function play(ctx) {
   let foes;
   let candles;
   let pickups = [];
+  let sigils = [];
   let shots = [];
   let whip = null;
   let floor = 0;
@@ -160,10 +172,26 @@ export default async function play(ctx) {
     level = buildLevel(groups, `floor${floor}`);
     foes = level.foes.map((f) => {
       const hpMax = bossHp(f.group.count);
-      return { ...f, ...SIZE[f.kind], vx: f.kind === 'crawler' ? 28 : 0, vy: 0, baseY: f.y, hp: hpMax, max: hpMax, by: null, flash: 0, immune: 0, phase: Math.random() * 6, hop: 2 };
+      return { ...f, ...SIZE[f.kind], vx: f.kind === 'crawler' ? 28 + floor * 5 : 0, vy: 0, baseY: f.y, hp: hpMax, max: hpMax, by: null, flash: 0, immune: 0, phase: Math.random() * 6, hop: Math.max(0.8, 2 - floor * 0.15) };
     });
     candles = level.candles.map((c) => ({ ...c, w: 4, h: 6, lit: true }));
     pickups = [];
+    // Optional ward sigils sit above the climbable ledges, away from the main route.
+    sigils = [];
+    for (let section = 1; section < level.sections - 1; section++) {
+      const left = section * SECTION + 2;
+      const right = (section + 1) * SECTION - 2;
+      for (let ty = 2; ty < GROUND; ty++) {
+        let platform = -1;
+        for (let tx = left; tx < right; tx++) {
+          if (level.solid[ty * level.w + tx]) { platform = tx; break; }
+        }
+        if (platform >= 0) {
+          sigils.push({ x: (platform + 1) * TILE, y: ty * TILE - 12, w: 10, h: 12, section, found: false });
+          break;
+        }
+      }
+    }
     shots = [];
     Object.assign(player, { x: 40, y: (GROUND - 2) * TILE, vx: 0, vy: 0 });
     player.safe = { x: player.x, y: player.y };
@@ -258,6 +286,18 @@ export default async function play(ctx) {
 
   kb = keyboard((e) => {
     const k = e.key.toLowerCase();
+    if (k === 'e' && Math.abs(player.x - 118) < 34) {
+      const hints = [
+        'The green crawlers yield to the Fix Beam. Purple fliers need another weapon.',
+        'Look up: ledges hide ward sigils. The minimap marks each one in cyan.',
+        'Big rules have boss armor. Watch their jumps, then strike between landings.',
+        'Candles hide hearts, and a high route may save you on the way to the exit.',
+        'The throne is close. Switch weapons freely until a foe takes its first hit.',
+      ];
+      const hint = hints[Math.min(floor, hints.length - 1)];
+      announce(`Luma: ${hint}`);
+      fx.float(118, GROUND * TILE - 42, 'LUMA: KEEP CLIMBING', '#9af8f0', 8);
+    }
     if (k === 'z' || k === ' ' || k === 'arrowup' || k === 'w') player.jumpBuf = 0.12;
     if (k === 'x' || k === 'j') attack();
     const w = WEAPONS.find((x) => x.key === e.key);
@@ -375,18 +415,18 @@ export default async function play(ctx) {
         f.x = m.x;
         f.y = m.y;
       } else if (f.kind === 'bat') {
-        if (near) f.x += Math.sign(player.x - f.x) * 30 * dt;
+        if (near) f.x += Math.sign(player.x - f.x) * (30 + floor * 5) * dt;
         f.y = f.baseY + Math.sin(t * 2.4 + f.phase) * 18 + (near ? Math.min(30, Math.max(-10, player.y - f.baseY)) * 0.6 : 0);
       } else {
         f.hop -= dt;
         f.vy += PHYS.gravity * dt;
         const dir = near ? Math.sign(player.x - f.x) : 0;
-        const m = moveBox(level, f, dir * 22 * dt, f.vy * dt);
+        const m = moveBox(level, f, dir * (22 + floor * 3) * dt, f.vy * dt);
         if (m.onGround) {
           f.vy = 0;
           if (f.hop <= 0 && near) {
             f.vy = -230;
-            f.hop = 2.2;
+            f.hop = Math.max(0.9, 2.2 - floor * 0.15);
           }
         }
         f.x = m.x;
@@ -406,6 +446,14 @@ export default async function play(ctx) {
       }
     }
     pickups = pickups.filter((p) => !p.taken);
+    for (const sigil of sigils) {
+      if (sigil.found || !overlap(player, sigil)) continue;
+      sigil.found = true;
+      hp = Math.min(MAX_HP, hp + 1);
+      fx.burst(sigil.x + 5, sigil.y + 5, '#50d5e8', 16, 80);
+      fx.float(player.x, player.y - 8, 'WARD SIGIL + HEART', '#7ce8ff', 8);
+      announce(`Ward sigil found in section ${sigil.section}. One heart restored.`);
+    }
     fx.step(dt);
     shake = Math.max(0, shake - dt);
     cam += (Math.max(0, Math.min(level.w * TILE - VW, player.x - VW / 2 + player.face * 30)) - cam) * Math.min(1, dt * 6);
@@ -461,19 +509,17 @@ export default async function play(ctx) {
     g.fillRect(level.exit.x + 6, level.exit.y, 2, 3 * TILE);
     for (const c of candles) {
       if (!c.lit) continue;
-      sprite(g, ART.candle, c.x, c.y);
-      if (Math.floor(t * 8) % 2) {
-        g.fillStyle = '#ffe14d';
-        g.fillRect(c.x + 1, c.y - 2, 2, 2);
-      }
+      drawCandle(g, c.x, c.y, t);
     }
-    for (const p of pickups) sprite(g, ART.heart, p.x, p.y);
+    drawGuide(g, 118, floor, t);
+    for (const p of pickups) drawHeart(g, p.x, p.y);
+    for (const sigil of sigils) if (!sigil.found) drawSigil(g, sigil.x, sigil.y, t);
     for (const f of foes) {
       // green can be fixed, plum is immune to the Fix Beam, red will not even parse
       const tint = f.flash > 0 ? '#fffdf8' : f.immune > 0 ? '#6b665c' : f.group.rule === 'parse-error' ? '#c7361d' : f.group.fixable ? '#17a673' : '#9b3d78';
-      const art = ART[f.kind];
-      const flip = f.kind !== 'bat' && (f.vx || player.x - f.x) < 0;
-      sprite(g, art, f.x - 1, f.y - (art.length - f.h), { flip, tint });
+      if (f.kind === 'crawler') drawCrawler(g, f.x, f.y, t, tint);
+      else if (f.kind === 'bat') drawBat(g, f.x, f.y, t, tint);
+      else drawBoss(g, f.x, f.y, t, tint);
       // HP pips
       for (let i = 0; i < f.max; i++) {
         g.fillStyle = i < f.hp ? (f.by ? COLOR[f.by] : '#f4f1ea') : '#3a3744';
@@ -502,7 +548,7 @@ export default async function play(ctx) {
     }
     if (!(player.inv > 0 && !reducedMotion && Math.floor(t * 14) % 2)) {
       const running = player.onGround && Math.abs(player.vx) > 0 && Math.floor(player.anim / 8) % 2;
-      sprite(g, running ? ART.heroRun : ART.hero, player.x - 1, player.y, { flip: player.face < 0 });
+      drawHero(g, player.x, player.y, player.face, running, t);
     }
     fx.draw(g);
     g.restore();
@@ -535,6 +581,10 @@ export default async function play(ctx) {
       if (left) {
         g.fillStyle = '#c7361d';
         g.fillRect(mx + s * (mw + 2) + 4, oy + 12, 2, 3);
+      }
+      if (sigils.some((sigil) => sigil.section === s && !sigil.found)) {
+        g.fillStyle = '#50d5e8';
+        g.fillRect(mx + s * (mw + 2) + 4, oy + 20, 2, 2);
       }
     }
 
