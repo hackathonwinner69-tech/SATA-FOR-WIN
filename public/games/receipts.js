@@ -30,6 +30,7 @@ export default async function play(ctx) {
   setStats([['Scanning', 'transactions…']]);
   const scan = await ctx.scan();
   const queue = [...scan.groups];
+  setStats([]);
   const cats = chore.actions.filter((a) => a.id.startsWith('cat:'));
   const colorOf = Object.fromEntries(chore.actions.map((a) => [a.id, a.color]));
 
@@ -49,7 +50,7 @@ export default async function play(ctx) {
     start: 'BEGIN',
   });
 
-  let enemy = null; // { group, art, color }
+  let enemy = null; // { group, art, color, done }
   let phase = 'text'; // text | menu | pick | dodge
   let text = '';
   let shown = 0;
@@ -94,8 +95,12 @@ export default async function play(ctx) {
     dodge = { time: attackLength(enemy.group), pattern: patternFor(enemy.group), state: {}, hit: false, thenNext };
   }
 
+  /** Merchants not dealt with yet: the queue, plus the one in front of you unless you already filed or spared it. */
+  const merchantsLeft = () => queue.length + (enemy && !enemy.done ? 1 : 0);
+
   function resolve(action) {
     const { group } = enemy;
+    enemy.done = true;
     const wise = action === group.suggestion;
     act(group.id, action).catch(() => {});
     filed += group.count;
@@ -114,6 +119,7 @@ export default async function play(ctx) {
       if (b === 'flag') resolve('flag');
       if (b === 'spare') {
         queue.push(enemy.group);
+        enemy.done = true;
         spared++;
         streak = 0;
         say(`* You spared ${enemy.group.label}. It will be back later.`, 'next');
@@ -176,11 +182,12 @@ export default async function play(ctx) {
     if (over) return;
     over = true;
     stopLoop();
+    const left = merchantsLeft();
     results(root, {
       title,
       lines: [
         `Your categorised CSV, expense-report.md and merchant-rules.json are next to ${chore.target.split(/[/\\]/).pop()}.`,
-        queue.length ? `${queue.length + 1} merchants are still waiting. Everything you filed stays filed.` : 'Every merchant has been dealt with.',
+        left ? `${left} merchant${left === 1 ? ' is' : 's are'} still waiting. Everything you filed stays filed.` : 'Every merchant has been dealt with.',
       ],
       stats: [
         [score.toLocaleString(), 'score'],
@@ -376,7 +383,7 @@ export default async function play(ctx) {
     setStats([
       ['Score', score.toLocaleString()],
       ['Streak', streak > 1 ? `×${streak}` : '-'],
-      ['Merchants left', String(queue.length + (enemy ? 1 : 0))],
+      ['Merchants left', String(merchantsLeft())],
       ['Sorted', `${filed} / ${scan.stats.open}`],
       ['Budget', `${Math.max(0, hp)}/${MAX_HP}`],
     ]);

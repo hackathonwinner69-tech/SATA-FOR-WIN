@@ -1,6 +1,7 @@
 // The arcade floor: the backlog, the ledger, and launching games.
 import { api, fmt, listen } from './api.js';
 import { spriteSvg } from './sprites.js';
+import { overlay } from '../games/kit.js';
 
 export const CABINETS = {
   invaders: {
@@ -64,9 +65,17 @@ async function refreshGoogle() {
   if (google.connected) {
     slot.innerHTML = `<span class="chip g-chip">${G_LOGO}<span>${esc(google.email ?? 'Google')}</span></span> <button class="btn quiet" type="button" id="g-out">Sign out</button>`;
     $('g-out').addEventListener('click', async () => {
-      await api('/google/disconnect', { method: 'POST' });
+      let result;
+      try {
+        result = await api('/google/disconnect', { method: 'POST' });
+      } catch (err) {
+        showNotice(`Could not sign out of Google: ${err.message}`);
+        return;
+      }
       announce('Signed out of Google. Gmail and Drive cabinets removed.');
-      refreshGoogle();
+      if (result.warning) showNotice(result.warning);
+      await refreshGoogle();
+      if (!result.warning) $('g-in')?.focus();
     });
   } else {
     slot.innerHTML = `<button class="btn quiet g-btn" type="button" id="g-in">${G_LOGO}<span>Sign in with Google</span></button>`;
@@ -75,22 +84,45 @@ async function refreshGoogle() {
         showNotice('Google sign-in needs a Google Cloud OAuth client. Copy .env.example to .env, add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, and restart. The README walks through it in two minutes.');
         return;
       }
-      const { url } = await api('/google/connect', { method: 'POST' });
-      location.assign(url);
+      try {
+        const { url } = await api('/google/connect', { method: 'POST' });
+        location.assign(url);
+      } catch (err) {
+        showNotice(`Could not start Google sign-in: ${err.message}`);
+        refreshGoogle();
+      }
     });
   }
   if (!current && state) renderMachines();
 }
 
-function showNotice(text) {
+function showNotice(text, focus = true) {
   const el = $('notice');
   el.textContent = text;
   el.classList.remove('hidden');
-  el.focus();
+  if (focus) el.focus();
 }
-let current = null; // { id, cleanup, impactListeners, opener }
+let current = null; // { id, cleanup, impactListeners, moves, opener }
+let counting = 0;
 const ledger = new Map();
+const undoing = new Set(); // ledger entry ids with an undo on its way
 const activeJobs = new Set();
+// A job can finish before the POST that queued it has answered, so finished jobs are kept for a while.
+const endedJobs = new Map();
+const jobWaiters = new Map();
+
+/** Resolves with the job once the worker reports it done or failed. */
+function jobEnd(id) {
+  if (endedJobs.has(id)) return Promise.resolve(endedJobs.get(id));
+  return new Promise((resolve) => jobWaiters.set(id, [...(jobWaiters.get(id) ?? []), resolve]));
+}
+
+function jobEnded(job) {
+  endedJobs.set(job.id, job);
+  if (endedJobs.size > 300) endedJobs.delete(endedJobs.keys().next().value);
+  for (const resolve of jobWaiters.get(job.id) ?? []) resolve(job);
+  jobWaiters.delete(job.id);
+}
 
 function shortPath(p) {
   const parts = String(p).split(/[/\\]/).filter(Boolean);
@@ -106,13 +138,39 @@ export function announce(message) {
 
 function renderTally() {
   const parts = state.chores.filter((c) => c.backlog).map((c) => `${fmt.n(c.backlog.remaining)} ${c.unit}`);
-  $('tally').textContent = parts.length ? parts.join(' · ') : 'Counting your chores…';
+  $('tally').textContent = parts.length ? parts.join(' · ') : counting ? 'Counting your chores…' : 'Open a cabinet to count its chores.';
+}
+
+const START_NOTE = {
+  demo: 'Every move does a real chore in the sandbox, and you can undo it from the ledger.',
+  live: 'Every move does a real chore on your files, and you can undo it from the ledger.',
+  'dry-run': 'Dry run: every move is written to the ledger and nothing on disk changes.',
+};
+
+function renderStart() {
+  const first = state.chores.find((c) => c.id === 'inbox') ?? state.chores.find((c) => c.game === 'invaders') ?? state.chores[0];
+  $('start').classList.toggle('hidden', !first);
+  if (!first) return;
+  const btn = $('start-btn');
+  btn.dataset.start = first.id;
+  btn.textContent = `Start here: ${first.title}`;
+  $('start-note').textContent = START_NOTE[state.mode] ?? START_NOTE.live;
+}
+
+function machineCount(c) {
+  const b = c.backlog;
+  if (b) return `<b>${fmt.n(b.remaining)}</b><span>${esc(c.unit)} left</span>`;
+  if (c.scanError) return `<span>Could not count: ${esc(c.scanError)}</span>`;
+  return counting && !c.remote ? '<span>Counting…</span>' : '<span>Not scanned yet</span>';
 }
 
 function renderMachines() {
   const mode = $('mode');
   mode.textContent = { demo: 'Demo sandbox', live: 'Live', 'dry-run': 'Dry run' }[state.mode];
   mode.className = `chip${state.mode === 'live' ? ' live' : ''}`;
+  // Re-rendering replaces the buttons, so remember which one had focus.
+  const focused = document.activeElement?.closest?.('#machines [data-play], #machines [data-calm], #machines [data-sheets]');
+  const focusKey = focused && ['play', 'calm', 'sheets'].map((k) => focused.dataset[k] && `[data-${k}="${focused.dataset[k]}"]`).find(Boolean);
   $('machines').innerHTML = state.chores
     .map((c) => {
       const meta = CABINETS[c.game];
@@ -127,7 +185,7 @@ function renderMachines() {
         <div>
           <h2 id="m-${c.id}">${esc(c.title)}${real}</h2>
           <p class="what">${esc(meta.what)}</p>
-          <div class="count">${b ? `<b>${fmt.n(b.remaining)}</b><span>${esc(c.unit)} left</span>` : c.remote ? '<span>Not scanned yet</span>' : '<span>Counting…</span>'}</div>
+          <div class="count">${machineCount(c)}</div>
           <div class="meter" role="progressbar" aria-label="${esc(c.chore)} progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div>
           <p class="done">${esc(impact.slice(0, 3).join(' · '))}</p>
           <p class="source" title="${esc(c.target)}">${esc(shortPath(c.target))}</p>
@@ -143,20 +201,28 @@ function renderMachines() {
   for (const el of document.querySelectorAll('[data-play]')) el.addEventListener('click', () => launch(el.dataset.play, 'game', el));
   for (const el of document.querySelectorAll('[data-calm]')) el.addEventListener('click', () => launch(el.dataset.calm, 'calm', el));
   for (const el of document.querySelectorAll('[data-sheets]')) el.addEventListener('click', () => exportSheets(el));
+  if (focusKey) $('machines').querySelector(focusKey)?.focus();
   renderTally();
+  renderStart();
 }
 
 async function exportSheets(button) {
   button.disabled = true;
   announce('Exporting to Google Sheets…');
   try {
-    const { url } = await api(`/chores/${button.dataset.sheets}/export/sheets`, { method: 'POST' });
+    const result = await api(`/chores/${button.dataset.sheets}/export/sheets`, { method: 'POST' });
+    if (result.dryRun) {
+      showNotice(`Dry run: no spreadsheet was created. A real run would make “${result.title}” with ${result.tabs.map((t) => t.name).join(' and ')} tabs.`);
+      return;
+    }
+    const { url } = result;
     if (!/^https:\/\/docs\.google\.com\//.test(url)) throw new Error('unexpected link from Google');
     showNotice('');
     $('notice').innerHTML = `Exported. <a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open your expenses in Google Sheets</a>`;
     announce('Exported to Google Sheets. A link is at the top of the page.');
   } catch (err) {
     showNotice(`Export failed: ${err.message}`);
+    if (err.status === 401) refreshGoogle();
   } finally {
     button.disabled = false;
   }
@@ -164,15 +230,19 @@ async function exportSheets(button) {
 
 /** Count every local chore so the board shows the real backlog straight away. */
 async function countAll() {
+  counting++;
   for (const c of state.chores) {
     if (c.remote) continue;
     try {
       const { stats } = await api(`/chores/${c.id}/scan`, { method: 'POST' });
       c.backlog = { baseline: stats.baseline, remaining: stats.remaining };
+      c.scanError = null;
     } catch (err) {
+      c.scanError = err.message;
       toast(err.message, true);
     }
   }
+  counting--;
   if (!current) renderMachines();
 }
 
@@ -197,7 +267,7 @@ async function launch(id, mode, opener) {
   const screen = $('game');
   screen.innerHTML = '';
   screen.className = mode === 'calm' ? 'screen paper' : 'screen';
-  const session = { id, cleanup: null, impactListeners: new Set(), opener };
+  const session = { id, cleanup: null, impactListeners: new Set(), moves: new Set(), opener };
   current = session;
   $('exit').focus();
 
@@ -214,11 +284,18 @@ async function launch(id, mode, opener) {
       chore.backlog = { baseline: result.stats.baseline, remaining: result.stats.remaining };
       return result;
     },
-    act: (groupId, action) =>
-      api(`/chores/${id}/act`, { method: 'POST', body: { groupId, action } }).catch((err) => {
+    act(groupId, action) {
+      const move = api(`/chores/${id}/act`, { method: 'POST', body: { groupId, action } }).catch((err) => {
         toast(err.message, true);
         throw err;
-      }),
+      });
+      session.moves.add(move.then((job) => jobEnd(job.id), () => null));
+      return move;
+    },
+    /** The job `act` returned, once the worker has finished it (status 'done' or 'failed'). */
+    landed: (job) => jobEnd(job.id),
+    /** Resolves when every move this game made has finished or failed, or after `ms`, whichever is first. */
+    settled: (ms = 15_000) => Promise.race([Promise.all(session.moves), new Promise((r) => setTimeout(r, ms))]),
     onImpact: (fn) => session.impactListeners.add(fn),
     impact: () => chore.impact,
     exit,
@@ -230,7 +307,10 @@ async function launch(id, mode, opener) {
     if (current === session) session.cleanup = cleanup;
     else cleanup?.();
   } catch (err) {
-    toast(`Could not start: ${err.message}`, true);
+    if (current !== session) return;
+    $('hud-stats').innerHTML = '';
+    screen.innerHTML = '';
+    overlay(screen, `<h2>Could not start</h2><p>${esc(err.message)}</p>`, [{ label: 'Back to the arcade', ghost: true, onClick: exit }]);
   }
 }
 
@@ -243,8 +323,8 @@ function exit() {
   $('floor').classList.remove('hidden');
   renderMachines();
   countAll();
-  // Put focus back on the button that opened the game.
-  const again = opener && document.querySelector(`[data-${opener.dataset.play ? 'play' : 'calm'}="${opener.dataset.play ?? opener.dataset.calm}"]`);
+  // Put focus back on the button that opened the game; cabinet buttons were just re-rendered.
+  const again = opener?.isConnected ? opener : opener && document.querySelector(`[data-${opener.dataset.play ? 'play' : 'calm'}="${opener.dataset.play ?? opener.dataset.calm}"]`);
   (again ?? $('main')).focus();
 }
 
@@ -257,36 +337,58 @@ function renderLedgerEntry(entry) {
     li.id = `log-${entry.id}`;
     list.prepend(li);
   }
+  const hadFocus = li.contains(document.activeElement);
   const time = new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const chore = state?.chores.find((c) => c.id === entry.chore);
+  const pending = undoing.has(entry.id);
   li.className = entry.undone ? 'undone' : '';
+  // A pending undo keeps its button focusable (aria-disabled, not disabled) so keyboard focus stays put.
+  const button = pending
+    ? `<button type="button" aria-disabled="true" aria-label="Undoing: ${esc(entry.label)}">…</button>`
+    : `<button type="button" aria-label="Undo: ${esc(entry.label)}">Undo</button>`;
   li.innerHTML = `<div class="what">${esc(entry.label)}<small>${esc(chore?.title ?? entry.chore)} · ${time}${entry.dryRun ? ' · dry run' : ''}${entry.undone ? ' · undone' : ''}</small></div>
-    ${entry.undoable && !entry.undone ? `<button type="button" aria-label="Undo: ${esc(entry.label)}">Undo</button>` : ''}`;
-  li.querySelector('button')?.addEventListener('click', async (e) => {
-    const btn = e.currentTarget;
-    btn.disabled = true;
-    btn.textContent = '…';
-    try {
-      await api(`/journal/${entry.id}/undo`, { method: 'POST' });
-    } catch (err) {
-      btn.disabled = false;
-      btn.textContent = 'Undo';
-      announce(`Undo failed: ${err.message}`);
-      alert(err.message);
+    ${entry.undoable && !entry.undone ? button : ''}`;
+  li.querySelector('button')?.addEventListener('click', () => undo(entry));
+  if (hadFocus) (li.querySelector('button') ?? $('ledger')).focus();
+}
+
+async function undo(entry) {
+  if (undoing.has(entry.id)) return;
+  undoing.add(entry.id);
+  renderLedgerEntry(entry);
+  let error = null;
+  try {
+    const job = await api(`/journal/${entry.id}/undo`, { method: 'POST' });
+    const end = await jobEnd(job.id);
+    // A failed job is announced by the job event handler; the POST errors below are not.
+    if (end.status === 'failed') error = end.error;
+    // The 'undo' event normally settles the entry; this covers one that went missing.
+    else if (undoing.delete(entry.id)) {
+      entry.undone = true;
+      renderLedgerEntry(entry);
     }
-  });
+  } catch (err) {
+    error = err.message;
+    announce(`Undo failed: ${err.message}`);
+  }
+  if (error === null) return;
+  undoing.delete(entry.id);
+  renderLedgerEntry(entry);
+  showNotice(`Undo failed: ${error}`, false);
 }
 
 function onEvent(event) {
   if (event.type === 'hello' || event.type === 'state') {
     const backlogs = new Map((state?.chores ?? []).map((c) => [c.id, c.backlog]));
+    const hadRemote = state?.chores.some((c) => c.remote);
     state = event.state;
     for (const c of state.chores) c.backlog ??= backlogs.get(c.id) ?? null;
+    if (event.type === 'hello') countAll();
+    // The Google cabinets also go when Google revokes the sign-in, so the masthead is refreshed with them.
+    if (event.type === 'hello' || (hadRemote && !state.chores.some((c) => c.remote))) refreshGoogle();
     if (!current) renderMachines();
-    if (event.type === 'hello') {
-      countAll();
-      refreshGoogle();
-    }
+    // Entries can arrive before the chores they belong to, so their chore names are filled in now.
+    for (const entry of ledger.values()) renderLedgerEntry(entry);
   }
   if (event.type === 'job') {
     if (event.job.status === 'queued' || event.job.status === 'running') activeJobs.add(event.job.id);
@@ -299,6 +401,7 @@ function onEvent(event) {
       toast(`${event.job.label}: ${event.job.error}`, true);
       announce(`Failed: ${event.job.label}. ${event.job.error}`);
     }
+    if (event.job.status === 'done' || event.job.status === 'failed') jobEnded(event.job);
   }
   if (event.type === 'change') {
     const chore = state.chores.find((c) => c.id === event.chore);
@@ -316,6 +419,7 @@ function onEvent(event) {
     if (chore) chore.impact = event.impact;
     if (current?.id === event.chore) for (const fn of current.impactListeners) fn(event.impact, null);
     const entry = ledger.get(event.entryId);
+    undoing.delete(event.entryId);
     if (entry) {
       entry.undone = true;
       renderLedgerEntry(entry);
@@ -325,6 +429,14 @@ function onEvent(event) {
     if (!current) countAll();
   }
 }
+
+/** What signing in added, keyed by the cabinets left out because their access was not granted. */
+const SIGNED_IN = {
+  '': 'Signed in with Google. Your Gmail inbox and Drive are now cabinets below. They are your real accounts: every move is journaled and undoable.',
+  drive: 'Signed in with Google. Drive access was not granted, so your Gmail inbox is the only new cabinet and Sheets export is off. To add Drive, sign out and connect again with Drive ticked. Gmail is your real account: every move is journaled and undoable.',
+  gmail: 'Signed in with Google. Gmail access was not granted, so your Drive is the only new cabinet. To add Gmail, sign out and connect again with Gmail ticked. Drive is your real account: every move is journaled and undoable.',
+  'drive,gmail': 'Signed in with Google, but neither Gmail nor Drive access was granted, so no cabinets were added. Sign out and connect again with both ticked.',
+};
 
 async function boot() {
   $('logo').innerHTML = spriteSvg('invaders', { size: 36 });
@@ -337,13 +449,16 @@ async function boot() {
   const params = new URLSearchParams(location.search);
   if (params.has('google')) {
     const outcome = params.get('google');
+    const skipped = (params.get('skipped') ?? '').split(',').filter(Boolean).sort().join(',');
     history.replaceState(null, '', '/');
-    showNotice(outcome === 'connected' ? 'Signed in with Google. Your Gmail inbox and Drive are now cabinets below. They are your real accounts: every move is journaled and undoable.' : 'Google sign-in was cancelled.');
+    showNotice(outcome === 'connected' ? (SIGNED_IN[skipped] ?? SIGNED_IN['']) : 'Google sign-in was cancelled.');
   }
   listen(onEvent);
   $('exit').addEventListener('click', exit);
+  $('start-btn').addEventListener('click', (e) => state && launch(e.currentTarget.dataset.start, 'game', e.currentTarget));
+  // Escape leaves the game from anywhere, the intro and results cards included, just like the Back button.
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && current && !document.querySelector('.overlay')) exit();
+    if (e.key === 'Escape' && current) exit();
   });
 }
 

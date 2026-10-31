@@ -37,12 +37,17 @@
             work while you play, and every change can be undone from the ledger.
           </p>
           <p class="tally" id="tally">Counting your chores…</p>
+          <div class="start hidden" id="start">
+            <button class="btn big" type="button" id="start-btn">Start here</button>
+            <p id="start-note"></p>
+          </div>
+          <a class="jump" href="#ledger">Jump to the ledger ↓</a>
           <p class="notice hidden" id="notice" role="status" tabindex="-1"></p>
         </section>
         <ul class="machines" id="machines" aria-label="Chores"></ul>
       </main>
 
-      <aside class="ledger" aria-labelledby="ledger-title">
+      <aside class="ledger" id="ledger" tabindex="-1" aria-labelledby="ledger-title">
         <header>
           <h2 id="ledger-title">Ledger</h2>
           <p>What really happened on your machine, newest first.</p>
@@ -57,8 +62,10 @@
         <h2 id="hud-title" class="hud-title"></h2>
         <dl id="hud-stats" class="hud-stats" aria-label="Score"></dl>
       </div>
-      <div id="game" class="screen"></div>
-      <div id="toasts" class="toasts" aria-hidden="true"></div>
+      <div class="screen-wrap">
+        <div id="game" class="screen"></div>
+        <div id="toasts" class="toasts" aria-hidden="true"></div>
+      </div>
     </section>
 
     <div id="announcer" class="sr-only" role="status" aria-live="polite"></div>

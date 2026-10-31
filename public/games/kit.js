@@ -2,7 +2,7 @@
 // keyboard input, overlays and a little particle fizz.
 
 /** Players who ask the OS for less motion get fewer particles and no screen shake. */
-export const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+export const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
 export function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -48,9 +48,22 @@ export function keyboard(onPress) {
     if ([' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) e.preventDefault();
   };
   const ku = (e) => down.delete(e.key);
+  // A key released while the page is in the background never sends keyup.
+  const release = () => down.clear();
+  const hidden = () => document.hidden && down.clear();
   window.addEventListener('keydown', kd);
   window.addEventListener('keyup', ku);
-  return { down, destroy: () => (window.removeEventListener('keydown', kd), window.removeEventListener('keyup', ku)) };
+  window.addEventListener('blur', release);
+  document.addEventListener('visibilitychange', hidden);
+  return {
+    down,
+    destroy() {
+      window.removeEventListener('keydown', kd);
+      window.removeEventListener('keyup', ku);
+      window.removeEventListener('blur', release);
+      document.removeEventListener('visibilitychange', hidden);
+    },
+  };
 }
 
 /** Show a modal card over the game. `buttons` is [{label, onClick}]. */
@@ -162,7 +175,8 @@ export function drawStars(ctx, view, field, dt, speed = 0.03) {
 }
 
 export function truncate(s, n) {
-  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+  const chars = Array.from(s);
+  return chars.length > n ? chars.slice(0, n - 1).join('') + '…' : s;
 }
 
 export function roundRect(ctx, x, y, w, h, r) {
@@ -181,7 +195,7 @@ export function actionBar(root, actions, onPick) {
     b.setAttribute('aria-pressed', 'false');
     b.style.setProperty('--c', a.color ?? '#22d3ee');
     b.setAttribute('aria-label', a.key ? `${a.label} (key ${a.key})` : a.label);
-    b.innerHTML = `<i></i>${a.key ? `<kbd>${esc(a.key)}</kbd>` : ''}<span class="lbl">${esc(a.label)}</span>`;
+    b.innerHTML = `<i></i>${a.key ? `<kbd>${esc(a.key)}</kbd>` : ''}<span class="lbl">${esc(a.label)}</span><span class="short">${esc(a.short ?? a.label)}</span>`;
     b.addEventListener('click', (e) => {
       e.stopPropagation();
       onPick(a.id);

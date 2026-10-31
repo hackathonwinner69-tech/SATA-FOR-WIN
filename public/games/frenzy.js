@@ -30,6 +30,7 @@ export default async function play(ctx) {
   setStats([['Scanning', 'folder…']]);
   const scan = await ctx.scan();
   const queue = [...scan.groups];
+  setStats([]);
 
   await intro(root, {
     title: 'FOLDER FRENZY',

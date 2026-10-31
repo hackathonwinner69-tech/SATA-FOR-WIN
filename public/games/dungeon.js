@@ -13,9 +13,9 @@ const VW = 320;
 const VH = 180;
 const MAX_HP = 6;
 const WEAPONS = [
-  { id: 'fix', label: 'Fix Beam', key: '1', color: '#17a673' },
-  { id: 'disable', label: 'Hush Whip', key: '2', color: '#f2b632' },
-  { id: 'log', label: 'Quest Scroll', key: '3', color: '#4f7cf0' },
+  { id: 'fix', label: 'Fix Beam', short: 'Fix', key: '1', color: '#17a673' },
+  { id: 'disable', label: 'Hush Whip', short: 'Hush', key: '2', color: '#f2b632' },
+  { id: 'log', label: 'Quest Scroll', short: 'Scroll', key: '3', color: '#4f7cf0' },
 ];
 const COLOR = Object.fromEntries(WEAPONS.map((w) => [w.id, w.color]));
 const FLOORS = ['Entrance Hall', 'Clock Corridor', 'Flooded Archive', 'Inner Keep', 'Throne of Warnings'];
@@ -109,6 +109,7 @@ export default async function play(ctx) {
   setStats([['Linting', 'project…']]);
   let scan = await ctx.scan();
   const startProblems = scan.stats.problems;
+  setStats([]);
   if (!scan.groups.length) {
     results(root, { title: 'NO MONSTERS', lines: ['ESLint has nothing to complain about. The castle is already clean.'], stats: [], onExit: exit });
     return () => destroyCanvas();
@@ -143,14 +144,11 @@ export default async function play(ctx) {
   let cam = 0;
   let hp = MAX_HP;
   let slain = 0;
-  let sent = 0;
-  let landed = 0;
   let over = false;
   let between = false;
   let shake = 0;
   const shelved = new Set();
   const seen = new Set(); // sections visited, for the minimap
-  ctx.onImpact((impact, entry) => entry && landed++);
 
   const player = { x: 40, y: 0, w: 8, h: 13, vx: 0, vy: 0, onGround: false, face: 1, coyote: 0, jumpBuf: 0, inv: 0, knock: 0, attackCd: 0, safe: { x: 40, y: 0 }, anim: 0 };
 
@@ -211,7 +209,6 @@ export default async function play(ctx) {
     if (foe.hp > 0) return;
     foes = foes.filter((f) => f !== foe);
     slain++;
-    sent++;
     if (spell === 'log') shelved.add(foe.group.rule);
     shake = reducedMotion ? 0 : 0.15;
     fx.burst(foe.x + foe.w / 2, foe.y + foe.h / 2, COLOR[spell], 26, 110);
@@ -248,10 +245,14 @@ export default async function play(ctx) {
   async function nextFloor() {
     between = true;
     fx.float(player.x, player.y - 10, 'THE WORKER SWEEPS UP…', '#f2b632', 8);
-    const until = Date.now() + 20_000;
-    while (landed < sent && Date.now() < until) await new Promise((r) => setTimeout(r, 150));
+    await ctx.settled();
     if (over) return;
-    scan = await ctx.scan();
+    try {
+      scan = await ctx.scan();
+    } catch (err) {
+      toast(`Could not scan the next floor: ${err.message}`, true);
+      return finish();
+    }
     floor++;
     enterFloor();
   }
@@ -270,17 +271,22 @@ export default async function play(ctx) {
     if (over) return;
     over = true;
     stopLoop();
-    while (landed < sent) await new Promise((r) => setTimeout(r, 150));
-    const after = await ctx.scan();
+    await ctx.settled();
+    let left = '?';
+    try {
+      left = (await ctx.scan()).stats.problems;
+    } catch (err) {
+      toast(`Could not count what is left: ${err.message}`, true);
+    }
     results(root, {
-      title: title ?? (after.stats.problems ? 'CASTLE SURVIVED' : 'CASTLE CLEANSED'),
+      title: title ?? (left ? 'CASTLE SURVIVED' : 'CASTLE CLEANSED'),
       lines: [
-        title ? 'Your hearts ran out. Everything you did really happened and stays done.' : after.stats.problems ? `${after.stats.problems} problems remain: the ones you logged for later.` : 'ESLint has nothing left to say about this project.',
+        title ? 'Your hearts ran out. Everything you did really happened and stays done.' : left === '?' ? 'ESLint could not be asked what is left.' : left ? `${left} problems remain: the ones you logged for later.` : 'ESLint has nothing left to say about this project.',
         'Review the diff before you commit. Every change can be undone from the ledger.',
       ],
       stats: [
         [String(startProblems), 'problems at the start'],
-        [String(after.stats.problems), 'problems now'],
+        [String(left), 'problems now'],
         [String(slain), 'foes beaten'],
         [String(floor + 1), 'floors'],
       ],

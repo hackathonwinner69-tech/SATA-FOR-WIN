@@ -3,14 +3,30 @@
 import { Fx, actionBar, drawStars, intro, keyboard, loop, makeCanvas, results, roundRect, stars, truncate } from './kit.js';
 
 const WEAPONS = {
-  archive: { color: '#38bdf8', name: 'ARCHIVE' },
-  trash: { color: '#f43f5e', name: 'TRASH' },
-  unsubscribe: { color: '#a855f7', name: 'UNSUB' },
-  keep: { color: '#22c55e', name: 'KEEP' },
+  archive: { color: '#38bdf8', name: 'ARCHIVE', short: 'Archive' },
+  trash: { color: '#f43f5e', name: 'TRASH', short: 'Trash' },
+  unsubscribe: { color: '#a855f7', name: 'UNSUB', short: 'Unsub' },
+  keep: { color: '#22c55e', name: 'KEEP', short: 'Keep' },
 };
 const KEYS = { a: 'archive', 1: 'archive', d: 'trash', 2: 'trash', u: 'unsubscribe', 3: 'unsubscribe', k: 'keep', 4: 'keep' };
 const HULL = { newsletter: '#7c3aed', notification: '#0891b2', receipt: '#b45309', person: '#eab308' };
 const MAX_ON_SCREEN = 9;
+
+/**
+ * What a bullet does to a ship. A person's shield drops on the first trash or
+ * unsubscribe hit, and only a bullet from a later press of fire confirms it, so
+ * holding fire down cannot zap a human by accident.
+ */
+export function shieldHit(ship, bullet) {
+  if (bullet.weapon !== 'trash' && bullet.weapon !== 'unsubscribe') return 'destroy';
+  if (ship.shield) return 'drop';
+  return bullet.press > (ship.shieldPress ?? -Infinity) ? 'destroy' : 'absorb';
+}
+
+/** Ships at least half inside the view; ones still sliding in from the top do not count. */
+export function onScreen(ships, view) {
+  return ships.filter((s) => s.y + s.h / 2 > 0 && s.y + s.h / 2 < view.h);
+}
 
 export default async function play(ctx) {
   const { root, chore, act, toast, setStats, exit } = ctx;
@@ -25,10 +41,11 @@ export default async function play(ctx) {
   const scan = await ctx.scan();
   const queue = [...scan.groups];
   const totalMail = scan.stats.messages;
+  setStats([]);
 
   await intro(root, {
     title: 'INBOX INVADERS',
-    story: `${totalMail.toLocaleString()} emails from ${queue.length} senders are invading. Each ship is one sender: one hit handles every email it ever sent you. The ring around a ship shows the weapon ChoreCade would pick. Gold ships are people: hitting a human with trash or unsubscribe takes two shots.`,
+    story: `${totalMail.toLocaleString()} emails from ${queue.length} senders are invading. Each ship is one sender: one hit handles every email it ever sent you. The ring around a ship shows the weapon ChoreCade would pick. Gold ships are people: trashing or unsubscribing a human takes two separate presses of fire.`,
     keys: [
       ['← →', 'move (or use the mouse)'],
       ['Space', 'fire (or click)'],
@@ -52,10 +69,11 @@ export default async function play(ctx) {
   let spawnTimer = 0;
   let over = false;
   let mouseX = null;
+  let press = 0; // counts presses of fire, so a held button is one press
 
   bar = actionBar(
     root,
-    chore.actions.map((a) => ({ ...a, color: WEAPONS[a.id].color })),
+    chore.actions.map((a) => ({ ...a, color: WEAPONS[a.id].color, short: WEAPONS[a.id].short })),
     (id) => {
       weapon = id;
       bar.select(id);
@@ -102,12 +120,12 @@ export default async function play(ctx) {
   function fire() {
     if (player.cooldown > 0 || over) return;
     player.cooldown = 0.18;
-    bullets.push({ x: player.x, y: view.h - 70, weapon });
+    bullets.push({ x: player.x, y: view.h - 70, weapon, press });
   }
 
   function smartBomb() {
     if (!bombs || over) return;
-    const targets = ships.filter((s) => s.group.risk === 'low');
+    const targets = onScreen(ships, view).filter((s) => s.group.risk === 'low');
     if (!targets.length) return toast('No low-risk ships on screen for the smart bomb');
     bombs--;
     for (const s of targets) destroyShip(s, s.group.suggestion, true);
@@ -116,6 +134,10 @@ export default async function play(ctx) {
 
   kb = keyboard((e) => {
     const k = e.key.toLowerCase();
+    if (k === ' ') {
+      press++;
+      fire(); // a tap shorter than a frame still fires
+    }
     if (KEYS[k]) {
       weapon = KEYS[k];
       bar.select(weapon);
@@ -125,6 +147,7 @@ export default async function play(ctx) {
   canvas.addEventListener('mousemove', (e) => (mouseX = e.offsetX));
   canvas.addEventListener('mousedown', (e) => {
     player.x = mouseX = e.offsetX;
+    press++;
     fire();
   });
 
@@ -174,12 +197,17 @@ export default async function play(ctx) {
       const s = ships.find((s) => b.x > s.x && b.x < s.x + s.w && b.y > s.y && b.y < s.y + s.h);
       if (!s) continue;
       b.dead = true;
-      const harsh = b.weapon === 'trash' || b.weapon === 'unsubscribe';
-      if (s.shield && harsh) {
+      const outcome = shieldHit(s, b);
+      if (outcome === 'drop') {
         s.shield = false;
+        s.shieldPress = b.press;
         s.hit = 0.4;
         fx.burst(b.x, s.y + s.h, '#fde047', 12, 120);
-        fx.float(s.x + s.w / 2, s.y - 8, 'A HUMAN! HIT AGAIN TO CONFIRM', '#fde047', 12);
+        fx.float(s.x + s.w / 2, s.y - 8, 'A HUMAN! FIRE AGAIN TO CONFIRM', '#fde047', 12);
+        continue;
+      }
+      if (outcome === 'absorb') {
+        fx.burst(b.x, s.y + s.h, '#fde047', 4, 60);
         continue;
       }
       destroyShip(s, b.weapon);

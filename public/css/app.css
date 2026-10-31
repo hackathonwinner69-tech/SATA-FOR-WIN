@@ -291,6 +291,33 @@ kbd {
   font-weight: 600;
   color: var(--ink);
 }
+.lede .start {
+  display: flex;
+  align-items: center;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+.lede .start .btn {
+  box-shadow: var(--shadow);
+}
+.lede .start .btn:hover {
+  box-shadow: 5px 5px 0 var(--ink);
+}
+.lede .start .btn:active {
+  box-shadow: 0 0 0 var(--ink);
+}
+.lede .start p {
+  flex: 1;
+  min-width: 220px;
+  font-size: 14px;
+}
+.jump {
+  display: none;
+  margin-top: 12px;
+  font-weight: 700;
+  color: var(--cobalt);
+}
 
 /* ---------- machines (one per chore) ---------- */
 .machines {
@@ -456,6 +483,10 @@ kbd {
   font-size: 13px;
   font-weight: 600;
 }
+.ledger li button[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: progress;
+}
 .ledger .empty {
   color: var(--ink-2);
   font-size: 14px;
@@ -507,6 +538,13 @@ kbd {
   font-family: var(--mono);
   font-weight: 600;
 }
+.screen-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .screen {
   position: relative;
   flex: 1;
@@ -528,7 +566,7 @@ kbd {
   color: var(--ink);
 }
 
-/* toasts are little paper slips that print out of the cabinet */
+/* toasts are little paper slips that print out of the cabinet, inside the screen so they never hide the HUD */
 .toasts {
   position: absolute;
   right: 14px;
@@ -643,6 +681,8 @@ kbd {
   z-index: 2;
   flex-wrap: nowrap;
   justify-content: center;
+  /* shrink-to-fit would stop at the 50% left offset and squeeze the labels */
+  width: max-content;
   max-width: calc(100% - 24px);
 }
 .bar button {
@@ -655,6 +695,7 @@ kbd {
   display: flex;
   gap: 6px;
   align-items: center;
+  white-space: nowrap;
 }
 .bar button[aria-pressed='true'] {
   background: var(--c, var(--sun));
@@ -667,6 +708,10 @@ kbd {
   border: 2px solid var(--ink);
   background: var(--c, var(--sun));
   display: inline-block;
+  flex: none;
+}
+.bar .short {
+  display: none;
 }
 
 /* ---------- calm mode ---------- */
@@ -726,6 +771,15 @@ kbd {
 .calm tr.done td {
   color: var(--ink-2);
 }
+.calm .row-err {
+  display: block;
+  margin-top: 4px;
+  color: var(--tomato);
+  font-size: 12px;
+}
+.calm .row-err:empty {
+  display: none;
+}
 .tag {
   display: inline-block;
   font-size: 12px;
@@ -747,9 +801,29 @@ kbd {
     position: static;
     max-height: 420px;
   }
+  .jump {
+    display: inline-block;
+  }
 }
 @media (max-width: 760px) {
   .bar .lbl {
+    display: none;
+  }
+  .bar .short {
+    display: inline;
+  }
+}
+@media (max-width: 480px) {
+  .bar {
+    gap: 4px;
+    max-width: calc(100% - 12px);
+  }
+  .bar button {
+    padding: 6px 8px;
+    gap: 5px;
+    font-size: 12px;
+  }
+  .bar kbd {
     display: none;
   }
 }
