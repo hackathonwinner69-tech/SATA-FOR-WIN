@@ -23,6 +23,9 @@ export class Arcade extends EventEmitter {
 
   /** Add a chore after start-up, e.g. once a Google account is connected. */
   addChore(chore) {
+    // A chore replaced under the same id (Gmail after signing in again) must not play the old one's scan.
+    this.scans.delete(chore.id);
+    this.backlog.delete(chore.id);
     this.chores.set(chore.id, chore);
     this.impact[chore.id] ??= {};
     this.emit('event', { type: 'state', state: this.summary() });

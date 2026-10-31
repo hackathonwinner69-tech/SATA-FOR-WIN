@@ -285,3 +285,13 @@ test('disconnect forgets the token even when Google fails to revoke it, and says
   assert.deepEqual(await offline.auth.disconnect(), { revoked: false });
   await rm(dir, { recursive: true, force: true });
 });
+
+test('a sign-in that Google revoked takes the Gmail and Drive cabinets with it', async () => {
+  const dir = await tempDir();
+  const { auth } = signedIn(() => json({ error: 'invalid_grant', error_description: 'Token has been expired or revoked.' }, 400), { tokenFile: join(dir, 'token.json'), token: { access_token: null } });
+  const { arcade } = mounted(auth, { dataDir: dir });
+  assert.deepEqual([...arcade.chores.keys()], ['gmail', 'drive']);
+  await assert.rejects(auth.api(API), (err) => err.status === 401);
+  assert.equal(arcade.chores.size, 0);
+  await rm(dir, { recursive: true, force: true });
+});

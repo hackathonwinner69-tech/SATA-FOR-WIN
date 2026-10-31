@@ -65,6 +65,7 @@ export class GoogleAuth {
     this.pending = new Map(); // state -> { verifier, redirectUri, at }
     this.token = null; // { refresh_token, access_token, expires_at, scope, email }
     this.refreshing = null;
+    this.onRevoked = null; // called once Google has rejected the saved sign-in and it is forgotten
   }
 
   get configured() {
@@ -193,6 +194,7 @@ export class GoogleAuth {
       if (this.token === token) {
         this.token = null;
         await rm(this.tokenFile, { force: true }).catch(() => {});
+        this.onRevoked?.();
       }
       throw Object.assign(new Error('Google access was revoked or has expired; connect Google again'), { status: 401 });
     }

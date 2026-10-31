@@ -35,6 +35,10 @@ export function mountGoogle({ app, api, arcade, auth, port, options }) {
     return skipped;
   };
   const status = () => ({ ...auth.status(), skipped: skippedChores(auth) });
+  // A sign-in that Google revoked takes its cabinets with it, just like signing out.
+  auth.onRevoked = () => {
+    for (const id of GOOGLE_CHORES) arcade.removeChore(id);
+  };
 
   if (auth.connected) {
     const skipped = connectChores();

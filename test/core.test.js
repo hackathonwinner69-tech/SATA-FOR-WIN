@@ -201,6 +201,13 @@ test('an undo only runs against the folder or mailbox the change was made in', a
   await assert.rejects(second.undo(entry.id), /made in \/home\/me\/Downloads/);
 });
 
+test('a chore replaced under the same id does not play the old scan', async (t) => {
+  const arcade = await arcadeWith(t, fakeChore(ok));
+  await arcade.scan('fake');
+  arcade.addChore(fakeChore(ok));
+  assert.throws(() => arcade.act('fake', 'g1', 'go'), (err) => err.status === 409);
+});
+
 test('a scan waits for queued moves and skips groups queued behind it', async (t) => {
   const order = [];
   let release;
