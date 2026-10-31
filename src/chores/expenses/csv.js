@@ -31,8 +31,18 @@ export function parseCsv(text) {
   return rows;
 }
 
+// Excel and Sheets run a cell that starts with one of these as a formula.
+const FORMULA_START = /^[=+\-@\t\r]/;
+const PLAIN_NUMBER = /^[+-]?\$?(\d{1,3}(,\d{3})+|\d+)?(\.\d+)?$/;
+
+/** Prefix formula-like cells with ' so a spreadsheet shows them as text; -12.50 stays a number. */
+function defuse(s) {
+  if (!FORMULA_START.test(s) || (/\d/.test(s) && PLAIN_NUMBER.test(s))) return s;
+  return `'${s}`;
+}
+
 function quote(value) {
-  const s = value == null ? '' : String(value);
+  const s = defuse(value == null ? '' : String(value));
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

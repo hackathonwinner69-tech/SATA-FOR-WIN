@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import { join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { exists } from '../../core/fsx.js';
-import { within } from '../../core/safety.js';
+import { assertNotSymlink, mdText, within, withinReal } from '../../core/safety.js';
 
 const CONFIG_FILES = ['eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts'];
 export const QUEST_LOG = 'LINT_QUESTLOG.md';
@@ -26,7 +26,7 @@ const sha = (s) => createHash('sha1').update(s).digest('hex');
 async function loadEslint(root) {
   try {
     const found = createRequire(join(root, 'package.json')).resolve('eslint');
-    if (!found.startsWith(root)) throw new Error('resolved outside the project');
+    within(root, found); // only the project's own copy, never one found in a folder above it
     return { mod: await import(pathToFileURL(found).href), own: true };
   } catch {
     return { mod: await import('eslint'), own: false };
@@ -74,6 +74,13 @@ export function createLintChore({ root, dryRun = false }) {
       };
     }
     return new engine.ESLint({ ...engine.base, ...extra });
+  }
+
+  /** A cloned project can plant a symlink where we write (to ~/.zshrc, say): refuse it. */
+  async function writable(file) {
+    const path = await withinReal(root, file);
+    await assertNotSymlink(path);
+    return path;
   }
 
   async function snapshot(files) {
@@ -143,13 +150,14 @@ export function createLintChore({ root, dryRun = false }) {
 
     async apply(group, action) {
       if (action === 'skip') return { affected: 0, summary: `skipped ${group.rule}`, impact: {}, undo: null };
-      const files = group.files.map((f) => within(root, f));
+      const files = [];
+      for (const f of group.files) files.push(await writable(f));
       if (dryRun) return { affected: group.count, summary: `[dry run] would ${action} ${group.rule}`, impact: {}, undo: null };
 
       if (action === 'log') {
-        const path = within(root, QUEST_LOG);
+        const path = await writable(QUEST_LOG);
         const before = (await exists(path)) ? await readFile(path, 'utf8') : null;
-        const lines = [`\n## ${group.rule} (${group.count})\n`, ...group.samples.map((s) => `- [ ] ${s.file}:${s.line} ${s.message}`)];
+        const lines = [`\n## ${mdText(group.rule)} (${group.count})\n`, ...group.samples.map((s) => `- [ ] ${mdText(s.file)}:${Number(s.line) || 0} ${mdText(s.message)}`)];
         if (group.count > group.samples.length) lines.push(`- ...and ${group.count - group.samples.length} more`);
         await appendFile(path, (before === null ? '# Lint quest log\n' : '') + lines.join('\n') + '\n');
         const after = await readFile(path, 'utf8');
@@ -166,8 +174,12 @@ export function createLintChore({ root, dryRun = false }) {
       if (action === 'fix') {
         const linter = await eslint({ fix: (m) => m.ruleId === group.rule });
         const results = await linter.lintFiles(files);
-        await engine.ESLint.outputFixes(results);
-        touched = results.filter((r) => r.output !== undefined).length;
+        // Written here instead of ESLint.outputFixes so every write is checked first.
+        for (const r of results) {
+          if (r.output === undefined) continue;
+          await writeFile(await writable(r.filePath), r.output);
+          touched++;
+        }
       } else if (action === 'disable') {
         // Lint again so line numbers reflect any fixes made since the scan.
         const results = await (await eslint()).lintFiles(files);
@@ -181,7 +193,7 @@ export function createLintChore({ root, dryRun = false }) {
             const indent = src[line - 1]?.match(/^\s*/)[0] ?? '';
             src.splice(line - 1, 0, `${indent}// eslint-disable-next-line ${group.rule} -- TODO(chorecade): fix properly`);
           }
-          await writeFile(r.filePath, src.join(eol));
+          await writeFile(await writable(r.filePath), src.join(eol));
           touched++;
         }
       } else {
@@ -202,7 +214,7 @@ export function createLintChore({ root, dryRun = false }) {
       // Check everything first so a refused undo changes nothing at all.
       const conflicts = [];
       for (const { file, afterHash } of changes) {
-        const path = within(root, file);
+        const path = await writable(file);
         const now = (await exists(path)) ? await readFile(path, 'utf8') : null;
         if (now === null || sha(now) !== afterHash) conflicts.push(relative(root, path));
       }
@@ -210,7 +222,7 @@ export function createLintChore({ root, dryRun = false }) {
         throw new Error(`changed since, left alone: ${conflicts.join(', ')} (undo later moves first)`);
       }
       for (const { file, before } of changes) {
-        const path = within(root, file);
+        const path = await writable(file);
         if (before === null) await rm(path);
         else await writeFile(path, before);
       }

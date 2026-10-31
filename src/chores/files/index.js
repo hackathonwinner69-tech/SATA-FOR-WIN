@@ -4,8 +4,8 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
-import { extname, join, resolve } from 'node:path';
-import { assertPlainFile, within } from '../../core/safety.js';
+import { dirname, extname, join, resolve } from 'node:path';
+import { assertNotSymlink, assertPlainFile, cleanLine, withinReal } from '../../core/safety.js';
 import { moveAllBack, safeMove } from '../../core/fsx.js';
 
 export const TRASH_DIR = '.chorecade-trash';
@@ -74,7 +74,8 @@ function packLabel(name, ext) {
 export function groupFiles(files) {
   const byHash = new Map();
   for (const f of files) {
-    if (!f.hash) continue;
+    // Every empty file has the same hash, so empty files are never duplicates of each other.
+    if (!f.hash || !(f.size > 0)) continue;
     if (!byHash.has(f.hash)) byHash.set(f.hash, []);
     byHash.get(f.hash).push(f);
   }
@@ -146,6 +147,12 @@ export function groupFiles(files) {
 /** A folder on this machine. Ids are file names; trash is a folder you can open. */
 export function localFolderStore(root) {
   root = resolve(root);
+  // A bin or the trash folder that is a symlink could send files anywhere, even back inside the root.
+  async function folderIn(name) {
+    const dir = await withinReal(root, name);
+    await assertNotSymlink(dir);
+    return dir;
+  }
   return {
     kind: 'local',
     describe: () => root,
@@ -163,17 +170,29 @@ export function localFolderStore(root) {
     },
     /** Move files into `bin` (a folder name), or into the trash folder when bin is null. */
     async move(ids, bin) {
-      const toDir = within(root, bin ?? TRASH_DIR);
+      const toDir = await folderIn(bin ?? TRASH_DIR);
+      const where = bin ? `${bin}/` : TRASH_DIR;
       const moved = [];
-      for (const name of ids) {
-        const from = within(root, name);
-        await assertPlainFile(from);
-        moved.push({ from, to: await safeMove(from, toDir) });
+      try {
+        for (const name of ids) {
+          const from = await withinReal(root, name);
+          await assertPlainFile(from);
+          moved.push({ from, to: await safeMove(from, toDir) });
+        }
+      } catch (err) {
+        if (!moved.length) throw err;
+        throw Object.assign(new Error(err.message, { cause: err }), { moved: { moved, where }, count: moved.length });
       }
-      return { moved, where: bin ? `${bin}/` : TRASH_DIR };
+      return { moved, where };
     },
     async restore({ moved }) {
-      return moveAllBack(moved.map(({ from, to }) => ({ from: within(root, from), to: within(root, to) })));
+      const back = [];
+      for (const { from, to } of moved) {
+        const current = await withinReal(root, to);
+        if (dirname(current) !== root) await folderIn(dirname(current));
+        back.push({ from: await withinReal(root, from), to: current });
+      }
+      return moveAllBack(back);
     },
   };
 }
@@ -204,8 +223,21 @@ export function createFilesChore({ root, store = localFolderStore(root), id = 'f
       const bin = action === 'trash' ? null : action.replace(/^move:/, '');
       if (bin !== null && !BINS[bin]) throw new Error(`unknown bin ${bin}`);
       if (dryRun) return { affected: count, summary: `[dry run] would move ${count} files to ${bin ?? 'trash'}`, impact: {}, undo: null };
-      const result = await store.move(group.files, bin);
       const verb = bin ? 'moved' : 'trashed';
+      let result;
+      try {
+        result = await store.move(group.files, bin);
+      } catch (err) {
+        if (err.count > 0) {
+          err.partial = {
+            affected: err.count,
+            summary: `${verb} ${err.count} of ${count} files ${bin ? 'to' : 'into'} ${err.moved.where} before it failed: ${cleanLine(err.message)}`,
+            impact: { [verb]: err.count },
+            undo: err.moved,
+          };
+        }
+        throw err;
+      }
       return {
         affected: count,
         summary: `${verb} ${count} files ${bin ? 'to' : 'into'} ${result.where}`,

@@ -2,8 +2,10 @@
 // play files every transaction from that merchant into a category, and the
 // categorised CSV, the report and the rules for next month are rewritten on
 // the spot.
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { basename, extname, join } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, extname, join } from 'node:path';
+import { assertNotSymlink, mdText } from '../../core/safety.js';
 import { parseCsv, toCsv } from './csv.js';
 
 export const CATEGORIES = [
@@ -59,8 +61,15 @@ function findColumn(header, names) {
   return header.findIndex((h) => names.some((n) => h.trim().toLowerCase() === n || h.trim().toLowerCase().includes(n)));
 }
 
+/** "-12.50", "(12.50)", "($1,234.50)" and "$-3" as numbers; parentheses mean negative. */
+function parseAmount(s) {
+  const text = String(s ?? '').trim();
+  const n = Number(text.replace(/[^0-9.-]/g, '')) || 0;
+  return /^\(.*\)$/.test(text) ? -Math.abs(n) : n;
+}
+
 export function readTransactions(text) {
-  const [header, ...rows] = parseCsv(text);
+  const [header = [], ...all] = parseCsv(text);
   const col = {
     date: findColumn(header, ['date', 'posted']),
     desc: findColumn(header, ['description', 'merchant', 'payee', 'name', 'details', 'narrative']),
@@ -71,12 +80,29 @@ export function readTransactions(text) {
   if (col.date < 0 || col.desc < 0 || (col.amount < 0 && col.debit < 0)) {
     throw new Error(`could not find date/description/amount columns in: ${header.join(', ')}`);
   }
-  const num = (s) => Number(String(s ?? '').replace(/[^0-9.-]/g, '')) || 0;
+  // Blank lines and footers such as "Total,-3.50" have no date or no description. Real rows may still leave out
+  // trailing empty fields, so those are padded to keep the added columns lined up.
+  const rows = all
+    .filter((r) => /\d/.test(r[col.date] ?? '') && String(r[col.desc] ?? '').trim())
+    .map((r) => (r.length < header.length ? [...r, ...Array(header.length - r.length).fill('')] : r));
   const txns = rows.map((r, i) => {
-    const amount = col.amount >= 0 ? num(r[col.amount]) : num(r[col.credit]) - num(r[col.debit]);
+    const amount = col.amount >= 0 ? parseAmount(r[col.amount]) : parseAmount(r[col.credit]) - parseAmount(r[col.debit]);
     return { row: i, date: r[col.date], description: r[col.desc], amount, merchant: normalizeMerchant(r[col.desc]) || r[col.desc] };
   });
-  return { header, rows, txns };
+  return { header, rows, txns, skipped: all.length - rows.length };
+}
+
+/** Write via a temp file and rename, so a crash never leaves half a file and a planted symlink is refused. */
+async function writeAtomic(path, text) {
+  await assertNotSymlink(path);
+  const tmp = join(dirname(path), `.${basename(path)}.${randomBytes(6).toString('hex')}.tmp`);
+  try {
+    await writeFile(tmp, text, { flag: 'wx' });
+    await rename(tmp, path);
+  } catch (err) {
+    await rm(tmp, { force: true });
+    throw err;
+  }
 }
 
 function monthOf(date) {
@@ -137,7 +163,7 @@ export function createExpensesChore({ csvPath, outDir, dryRun = false }) {
     rules: join(outDir, 'merchant-rules.json'),
     state: join(outDir, `.${stem}.assignments.json`),
   };
-  let data = null; // { header, rows, txns }
+  let data = null; // { header, rows, txns, skipped }
   let assignments = {}; // row -> { category, flagged }
 
   async function loadJson(path, fallback) {
@@ -148,17 +174,22 @@ export function createExpensesChore({ csvPath, outDir, dryRun = false }) {
     }
   }
 
+  async function checkOutputs() {
+    for (const path of Object.values(out)) await assertNotSymlink(path);
+  }
+
   async function writeOutputs() {
+    await checkOutputs();
     const header = [...data.header, 'Category', 'Needs review'];
     const rows = data.rows.map((r, i) => [...r, assignments[i]?.category ?? '', assignments[i]?.flagged ? 'yes' : '']);
     await mkdir(outDir, { recursive: true });
-    await writeFile(out.csv, toCsv([header, ...rows]));
-    await writeFile(out.state, JSON.stringify(assignments));
+    await writeAtomic(out.csv, toCsv([header, ...rows]));
+    await writeAtomic(out.state, JSON.stringify(assignments));
 
     const rules = await loadJson(out.rules, {});
     for (const t of data.txns) if (assignments[t.row]?.category) rules[t.merchant] = assignments[t.row].category;
-    await writeFile(out.rules, JSON.stringify(rules, null, 2) + '\n');
-    await writeFile(out.report, report());
+    await writeAtomic(out.rules, JSON.stringify(rules, null, 2) + '\n');
+    await writeAtomic(out.report, report());
   }
 
   function report() {
@@ -176,7 +207,7 @@ export function createExpensesChore({ csvPath, outDir, dryRun = false }) {
     }
     const money = (n) => (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const lines = [
-      `# Expense report: ${basename(csvPath)}`,
+      `# Expense report: ${mdText(basename(csvPath))}`,
       '',
       `Reviewed ${done} of ${data.txns.length} transactions with ChoreCade on ${new Date().toISOString().slice(0, 10)}.`,
       '',
@@ -184,18 +215,18 @@ export function createExpensesChore({ csvPath, outDir, dryRun = false }) {
       '| --- | ---: |',
       ...Object.entries(totals)
         .sort((a, b) => a[1] - b[1])
-        .map(([c, v]) => `| ${c} | ${money(v)} |`),
+        .map(([c, v]) => `| ${mdText(c)} | ${money(v)} |`),
       '',
     ];
     if (subs.size) {
       const monthly = [...subs.values()].reduce((s, v) => s + v, 0);
       lines.push(`## Subscriptions (${money(-monthly)} a month, ${money(-monthly * 12)} a year)`, '');
-      for (const [m, v] of subs) lines.push(`- ${m}: ${money(-v)}`);
+      for (const [m, v] of subs) lines.push(`- ${mdText(m)}: ${money(-v)}`);
       lines.push('');
     }
     if (flagged.length) {
       lines.push(`## Needs review (${flagged.length})`, '');
-      for (const t of flagged) lines.push(`- ${t.date} ${t.description} ${money(t.amount)}`);
+      for (const t of flagged) lines.push(`- ${mdText(t.date)} ${mdText(t.description)} ${money(t.amount)}`);
       lines.push('');
     }
     return lines.join('\n');
@@ -238,7 +269,7 @@ export function createExpensesChore({ csvPath, outDir, dryRun = false }) {
       const groups = groupByMerchant(open, rules);
       return {
         groups,
-        stats: { transactions: data.txns.length, open: open.length, remaining: open.length, merchants: groups.length, spend: Math.round(data.txns.reduce((s, t) => s + Math.min(t.amount, 0), 0)) },
+        stats: { transactions: data.txns.length, skipped: data.skipped, open: open.length, remaining: open.length, merchants: groups.length, spend: Math.round(data.txns.reduce((s, t) => s + Math.min(t.amount, 0), 0)) },
       };
     },
 
@@ -248,9 +279,19 @@ export function createExpensesChore({ csvPath, outDir, dryRun = false }) {
       const category = flag ? null : action.replace(/^cat:/, '');
       if (!flag && !CATEGORIES.some((c) => c.id === category)) throw new Error(`unknown category ${category}`);
       if (dryRun) return { affected: group.rows.length, summary: `[dry run] would file ${group.label} under ${category ?? 'review'}`, impact: {}, undo: null };
+      await checkOutputs();
       const previous = Object.fromEntries(group.rows.map((r) => [r, assignments[r] ?? null]));
       for (const r of group.rows) assignments[r] = { category: category ?? assignments[r]?.category ?? null, flagged: flag };
-      await writeOutputs();
+      try {
+        await writeOutputs();
+      } catch (err) {
+        // Put the earlier assignments back and rewrite the outputs from them, so a failed save leaves nothing half done.
+        const undo = { previous };
+        await this.undo(undo).catch(() => {
+          err.partial = { affected: group.rows.length, summary: `saving ${group.label} failed partway and could not be rolled back: ${err.message}`, impact: {}, undo };
+        });
+        throw err;
+      }
       return {
         affected: group.rows.length,
         summary: flag ? `flagged ${group.label} for review` : `filed ${group.rows.length} × ${group.label} under ${category}`,

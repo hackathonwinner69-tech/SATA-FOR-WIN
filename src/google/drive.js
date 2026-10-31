@@ -18,6 +18,12 @@ export function binForMime(mime = '') {
 // Folder ids come from Drive itself; quote them defensively for the query language anyway.
 const q = (s) => `'${String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 
+/** A move that failed after some files went through carries what is needed to put just those back. */
+function partialMove(err, moved, count) {
+  if (!count) return err;
+  return Object.assign(new Error(err.message, { cause: err }), { moved, count, status: err.status });
+}
+
 export class DriveStore {
   constructor(auth, { folderId = 'root', concurrency = 8 } = {}) {
     this.auth = auth;
@@ -68,21 +74,44 @@ export class DriveStore {
     return id;
   }
 
+  /**
+   * PATCH every file the same way. Setting trashed or parents is safe to repeat.
+   * After the first failure no new requests start; returns the ids that went through, in order.
+   */
+  async patchAll(ids, request) {
+    const ok = new Set();
+    let failure = null;
+    await pool(ids, this.concurrency, async (id) => {
+      if (failure) return;
+      try {
+        await this.auth.api(`${API}/${id}`, { method: 'PATCH', idempotent: true, ...request });
+        ok.add(id);
+      } catch (err) {
+        failure ??= err;
+      }
+    });
+    return { done: ids.filter((id) => ok.has(id)), failure };
+  }
+
   async move(ids, bin) {
     if (bin === null) {
-      await pool(ids, this.concurrency, (id) => this.auth.api(`${API}/${id}`, { method: 'PATCH', query: { fields: 'id' }, body: { trashed: true } }));
-      return { ids, trashed: true, where: 'Drive trash' };
+      const { done, failure } = await this.patchAll(ids, { query: { fields: 'id' }, body: { trashed: true } });
+      const result = (moved) => ({ ids: moved, trashed: true, where: 'Drive trash' });
+      if (failure) throw partialMove(failure, result(done), done.length);
+      return result(ids);
     }
     const to = await this.binFolder(bin);
-    await pool(ids, this.concurrency, (id) => this.auth.api(`${API}/${id}`, { method: 'PATCH', query: { addParents: to, removeParents: this.folderId, fields: 'id' }, body: {} }));
-    return { ids, to, from: this.folderId, where: `${bin}/ in Drive` };
+    const { done, failure } = await this.patchAll(ids, { query: { addParents: to, removeParents: this.folderId, fields: 'id' }, body: {} });
+    const result = (moved) => ({ ids: moved, to, from: this.folderId, where: `${bin}/ in Drive` });
+    if (failure) throw partialMove(failure, result(done), done.length);
+    return result(ids);
   }
 
   async restore({ ids, trashed, to, from }) {
-    if (trashed) {
-      await pool(ids, this.concurrency, (id) => this.auth.api(`${API}/${id}`, { method: 'PATCH', query: { fields: 'id' }, body: { trashed: false } }));
-    } else {
-      await pool(ids, this.concurrency, (id) => this.auth.api(`${API}/${id}`, { method: 'PATCH', query: { addParents: from, removeParents: to, fields: 'id' }, body: {} }));
+    const request = trashed ? { query: { fields: 'id' }, body: { trashed: false } } : { query: { addParents: from, removeParents: to, fields: 'id' }, body: {} };
+    const { done, failure } = await this.patchAll(ids, request);
+    if (failure) {
+      throw Object.assign(new Error(`put ${done.length} of ${ids.length} files back before it failed: ${failure.message}`, { cause: failure }), { status: failure.status });
     }
     return ids.length;
   }
