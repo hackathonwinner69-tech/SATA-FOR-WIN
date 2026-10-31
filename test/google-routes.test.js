@@ -37,7 +37,7 @@ const api = (path, opts = {}) => fetch(base + path, { ...opts, headers: { 'x-cho
 
 test('Google status and connect are behind the session token', async () => {
   assert.equal((await fetch(`${base}/api/google`)).status, 401);
-  assert.deepEqual(await (await api('/api/google')).json(), { configured: true, connected: false, email: null });
+  assert.deepEqual(await (await api('/api/google')).json(), { configured: true, connected: false, email: null, skipped: [] });
   const { url } = await (await api('/api/google/connect', { method: 'POST' })).json();
   const u = new URL(url);
   assert.equal(u.origin, 'https://accounts.google.com');
@@ -53,7 +53,7 @@ test('the OAuth callback refuses a state it never issued', async () => {
 test('a cancelled consent screen just returns to the arcade', async () => {
   const res = await fetch(`${base}/oauth/google/callback?error=access_denied`, { redirect: 'manual' });
   assert.equal(res.status, 302);
-  assert.equal(res.headers.get('location'), '/?google=cancelled');
+  assert.equal(res.headers.get('location'), `http://localhost:${port}/?google=cancelled`);
 });
 
 test('Sheets export needs a signed-in Google account', async () => {

@@ -3,8 +3,8 @@
 // https://developers.google.com/identity/protocols/oauth2/native-app
 // The refresh token is kept in a local file readable only by this user.
 import { createHash, randomBytes } from 'node:crypto';
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 
 export const SCOPES = {
   // Read headers and move mail between labels; cannot permanently delete.
@@ -13,22 +13,58 @@ export const SCOPES = {
   drive: 'https://www.googleapis.com/auth/drive',
 };
 
+// Broader grants that also cover what each cabinet needs.
+const ALSO_COVERS = { gmail: ['https://mail.google.com/'], drive: [] };
+
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 const STATE_TTL = 10 * 60 * 1000;
+const TIMEOUT = 30_000;
+const REFRESH_EARLY = 60_000;
+const RETRIES = 4;
+const MAX_WAIT = 30_000;
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'PUT', 'DELETE']);
 
 const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Parse a response body without letting an HTML error page hide the status. */
+async function readBody(res) {
+  const text = await res.text().catch(() => '');
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function googleError(what, res, data) {
+  const detail = data?.error?.message ?? data?.error_description ?? (typeof data?.error === 'string' ? data.error : null);
+  const why = detail ?? (data === null ? 'the response was not JSON' : res.statusText);
+  const code = typeof data?.error === 'string' ? data.error : data?.error?.status;
+  return Object.assign(new Error(`${what} failed with HTTP ${res.status}${why ? `: ${why}` : ''}`), { status: res.status, code });
+}
+
+function fetchError(what, err) {
+  const message = err?.name === 'TimeoutError' ? `${what} timed out after ${TIMEOUT / 1000} s` : `${what} could not reach Google: ${err?.message ?? err}`;
+  return Object.assign(new Error(message), { cause: err });
+}
 
 export class GoogleAuth {
-  constructor({ clientId, clientSecret, tokenFile, fetchImpl = fetch, now = () => Date.now() }) {
+  constructor({ clientId, clientSecret, tokenFile, fetchImpl = fetch, now = () => Date.now(), sleep = wait, random = Math.random, log = console.warn }) {
     this.clientId = clientId;
     this.clientSecret = clientSecret;
     this.tokenFile = tokenFile;
     this.fetch = fetchImpl;
     this.now = now;
+    this.sleep = sleep;
+    this.random = random;
+    this.log = log;
     this.pending = new Map(); // state -> { verifier, redirectUri, at }
     this.token = null; // { refresh_token, access_token, expires_at, scope, email }
+    this.refreshing = null;
   }
 
   get configured() {
@@ -40,12 +76,31 @@ export class GoogleAuth {
   }
 
   async load() {
+    this.token = null;
+    let text;
     try {
-      this.token = JSON.parse(await readFile(this.tokenFile, 'utf8'));
+      text = await readFile(this.tokenFile, 'utf8');
+    } catch (err) {
+      if (err.code !== 'ENOENT') this.log(`Google: could not read the saved sign-in (${err.message}); connect Google again`);
+      return false;
+    }
+    try {
+      const token = JSON.parse(text);
+      if (!token?.refresh_token) throw new Error('no refresh token');
+      this.token = token;
     } catch {
-      this.token = null;
+      this.log(`Google: the saved sign-in in ${this.tokenFile} is damaged and was ignored; connect Google again`);
     }
     return this.connected;
+  }
+
+  /** Whether the signed-in account granted what a cabinet ('gmail' or 'drive') needs. */
+  granted(name) {
+    if (!this.connected) return false;
+    // Google leaves `scope` out only when it granted exactly what was asked for.
+    if (typeof this.token.scope !== 'string') return true;
+    const scopes = this.token.scope.split(/\s+/);
+    return [SCOPES[name], ...ALSO_COVERS[name]].some((s) => scopes.includes(s));
   }
 
   /** Build the consent URL. `state` ties the callback to this request; PKCE ties the code to us. */
@@ -83,57 +138,121 @@ export class GoogleAuth {
       code_verifier: pending.verifier,
     });
     if (!data.refresh_token) throw new Error('Google did not return a refresh token; remove ChoreCade from your Google account permissions and sign in again');
-    this.token = { refresh_token: data.refresh_token, scope: data.scope, ...this.accessFrom(data) };
-    this.token.email = await this.lookupEmail();
+    this.refreshing = null;
+    this.token = { refresh_token: data.refresh_token, scope: data.scope, ...this.accessFrom(data), email: null };
+    try {
+      this.token.email = await this.lookupEmail();
+    } catch (err) {
+      this.log(`Google: signed in, but could not look up the account's email address (${err.message})`);
+    }
     await this.save();
     return this.token.email;
   }
 
   accessFrom(data) {
-    return { access_token: data.access_token, expires_at: this.now() + (data.expires_in - 60) * 1000 };
+    return { access_token: data.access_token, expires_at: this.now() + data.expires_in * 1000 };
   }
 
   async tokenRequest(fields) {
-    const res = await this.fetch(TOKEN_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ client_id: this.clientId, client_secret: this.clientSecret, ...fields }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw Object.assign(new Error(`Google token request failed: ${data.error_description ?? data.error ?? res.status}`), { status: 502 });
+    let res;
+    try {
+      res = await this.fetch(TOKEN_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ client_id: this.clientId, client_secret: this.clientSecret, ...fields }),
+        signal: AbortSignal.timeout(TIMEOUT),
+      });
+    } catch (err) {
+      throw fetchError('Google token request', err);
+    }
+    const data = await readBody(res);
+    if (!res.ok) throw googleError('Google token request', res, data);
+    if (!data) throw Object.assign(new Error(`Google token request returned HTTP ${res.status} but the response was not JSON`), { status: 502 });
     return data;
   }
 
+  /** A current access token. Concurrent callers share one refresh. */
   async accessToken() {
     if (!this.connected) throw Object.assign(new Error('not signed in to Google'), { status: 401 });
-    if (!this.token.access_token || this.now() >= this.token.expires_at) {
-      Object.assign(this.token, this.accessFrom(await this.tokenRequest({ grant_type: 'refresh_token', refresh_token: this.token.refresh_token })));
-    }
-    return this.token.access_token;
+    if (this.token.access_token && this.now() < this.token.expires_at - REFRESH_EARLY) return this.token.access_token;
+    this.refreshing ??= this.refresh().finally(() => {
+      this.refreshing = null;
+    });
+    return this.refreshing;
   }
 
-  /** Authorised JSON request with backoff on rate limits and server errors. */
-  async api(url, { method = 'GET', body, query } = {}) {
+  async refresh() {
+    const token = this.token;
+    try {
+      const data = await this.tokenRequest({ grant_type: 'refresh_token', refresh_token: token.refresh_token });
+      Object.assign(token, this.accessFrom(data));
+      return token.access_token;
+    } catch (err) {
+      if (err.code !== 'invalid_grant') throw err;
+      // The grant was revoked or expired at Google: the saved token is useless now.
+      if (this.token === token) {
+        this.token = null;
+        await rm(this.tokenFile, { force: true }).catch(() => {});
+      }
+      throw Object.assign(new Error('Google access was revoked or has expired; connect Google again'), { status: 401 });
+    }
+  }
+
+  /**
+   * Authorised JSON request. Rate limits (429) are always retried; server
+   * errors, timeouts and network errors only when the request is safe to
+   * repeat (GET, HEAD, PUT, DELETE, or `idempotent: true`), so a POST that
+   * creates something never runs twice.
+   */
+  async api(url, { method = 'GET', body, query, idempotent } = {}) {
     const target = query ? `${url}?${new URLSearchParams(query)}` : url;
+    const repeatable = idempotent ?? SAFE_METHODS.has(method.toUpperCase());
+    let refreshed = false;
     for (let attempt = 0; ; attempt++) {
-      const res = await this.fetch(target, {
-        method,
-        headers: { authorization: `Bearer ${await this.accessToken()}`, ...(body ? { 'content-type': 'application/json' } : {}) },
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      if ((res.status === 429 || res.status >= 500) && attempt < 4) {
-        await new Promise((r) => setTimeout(r, 2 ** attempt * 400));
+      const canRetry = attempt < RETRIES;
+      const accessToken = await this.accessToken();
+      let res;
+      try {
+        res = await this.fetch(target, {
+          method,
+          headers: { authorization: `Bearer ${accessToken}`, ...(body ? { 'content-type': 'application/json' } : {}) },
+          body: body ? JSON.stringify(body) : undefined,
+          signal: AbortSignal.timeout(TIMEOUT),
+        });
+      } catch (err) {
+        if (repeatable && canRetry) {
+          await this.sleep(this.backoff(attempt));
+          continue;
+        }
+        throw fetchError(`Google API ${method}`, err);
+      }
+      if (canRetry && (res.status === 429 || (res.status >= 500 && repeatable))) {
+        await res.body?.cancel().catch(() => {});
+        await this.sleep(this.backoff(attempt, res.headers.get('retry-after')));
         continue;
       }
-      if (res.status === 401 && attempt === 0) {
-        this.token.expires_at = 0; // token revoked or expired early: refresh once
+      if (res.status === 401 && !refreshed) {
+        refreshed = true;
+        await res.body?.cancel().catch(() => {});
+        if (this.token) this.token.expires_at = 0; // token revoked or expired early: refresh once
         continue;
       }
-      const text = await res.text();
-      const data = text ? JSON.parse(text) : {};
-      if (!res.ok) throw Object.assign(new Error(`Google API ${res.status}: ${data.error?.message ?? res.statusText}`), { status: res.status === 403 ? 403 : 502 });
+      const data = await readBody(res);
+      if (!res.ok) throw googleError(`Google API ${method}`, res, data);
+      if (!data) throw Object.assign(new Error(`Google API ${method} returned HTTP ${res.status} but the response was not JSON`), { status: 502 });
       return data;
     }
+  }
+
+  /** Milliseconds to wait before retry number `attempt`: Retry-After if Google sent one, else exponential with jitter. */
+  backoff(attempt, retryAfter) {
+    if (retryAfter) {
+      const seconds = Number(retryAfter);
+      const ms = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retryAfter) - this.now();
+      if (Number.isFinite(ms)) return Math.min(Math.max(ms, 0), MAX_WAIT);
+    }
+    const ceiling = Math.min(400 * 2 ** attempt, MAX_WAIT);
+    return Math.round(ceiling / 2 + (this.random() * ceiling) / 2);
   }
 
   async lookupEmail() {
@@ -144,24 +263,45 @@ export class GoogleAuth {
     }
   }
 
+  /** Write the token to a private temp file, then rename it into place, so the file is never partial or readable by others. */
   async save() {
-    await mkdir(dirname(this.tokenFile), { recursive: true });
+    const dir = dirname(this.tokenFile);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
     const { refresh_token, scope, email } = this.token;
-    await writeFile(this.tokenFile, JSON.stringify({ refresh_token, scope, email }), { mode: 0o600 });
-    await chmod(this.tokenFile, 0o600).catch(() => {});
+    const tmp = join(dir, `.${basename(this.tokenFile)}.${randomBytes(6).toString('hex')}.tmp`);
+    try {
+      await writeFile(tmp, JSON.stringify({ refresh_token, scope, email }), { mode: 0o600, flag: 'wx' });
+      await rename(tmp, this.tokenFile);
+    } catch (err) {
+      await rm(tmp, { force: true }).catch(() => {});
+      throw err;
+    }
   }
 
-  /** Sign out: revoke the grant at Google and forget the token here. */
+  /**
+   * Sign out: revoke the grant at Google and forget the token here. The local
+   * token goes either way; `revoked` says whether Google confirmed it.
+   */
   async disconnect() {
+    let revoked = true;
     if (this.token?.refresh_token) {
-      await this.fetch(REVOKE_URL, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ token: this.token.refresh_token }),
-      }).catch(() => {});
+      try {
+        const res = await this.fetch(REVOKE_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ token: this.token.refresh_token }),
+          signal: AbortSignal.timeout(TIMEOUT),
+        });
+        // invalid_token: Google no longer knows this token, so there is no access left to remove.
+        revoked = res.ok || (await readBody(res))?.error === 'invalid_token';
+      } catch {
+        revoked = false;
+      }
     }
     this.token = null;
+    this.refreshing = null;
     await rm(this.tokenFile, { force: true });
+    return { revoked };
   }
 
   status() {
