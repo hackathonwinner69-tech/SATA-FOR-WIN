@@ -185,6 +185,26 @@ function drawParallaxBackground(g, cam, t, theme) {
   }
   g.globalAlpha = 1;
 
+  // The full moon is a distant, camera-shifted sprite with softly shaded craters.
+  g.save(); g.translate(-cam * 0.085, 0);
+  const moonX = 246;
+  const moonY = 43;
+  const halo = g.createRadialGradient(moonX, moonY, 12, moonX, moonY, 43);
+  halo.addColorStop(0, 'rgba(239,231,197,.23)'); halo.addColorStop(1, 'rgba(173,204,233,0)');
+  g.fillStyle = halo; g.beginPath(); g.arc(moonX, moonY, 43, 0, Math.PI * 2); g.fill();
+  const disk = g.createRadialGradient(moonX - 8, moonY - 9, 2, moonX + 4, moonY + 4, 26);
+  disk.addColorStop(0, '#fff8dc'); disk.addColorStop(0.68, '#e6dfc5'); disk.addColorStop(1, '#a9b4c4');
+  g.fillStyle = disk; g.beginPath(); g.arc(moonX, moonY, 21, 0, Math.PI * 2); g.fill();
+  g.save(); g.beginPath(); g.arc(moonX, moonY, 20.5, 0, Math.PI * 2); g.clip();
+  g.fillStyle = 'rgba(91,108,128,.16)';
+  g.beginPath(); g.ellipse(moonX - 7, moonY - 2, 4.2, 2.8, -0.4, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.ellipse(moonX + 7, moonY + 7, 5.2, 3.4, 0.35, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.ellipse(moonX + 3, moonY - 9, 2.3, 1.5, 0.6, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = 'rgba(255,255,239,.36)'; g.lineWidth = 1;
+  g.beginPath(); g.arc(moonX - 7, moonY - 2, 4.2, 2.1, 4.6); g.stroke();
+  g.beginPath(); g.arc(moonX + 7, moonY + 7, 5.2, -0.4, 2.4); g.stroke();
+  g.restore(); g.restore();
+
   const ridgeOffset = (cam * 0.1) % 300;
   g.save(); g.translate(-ridgeOffset, 0);
   for (let block = -1; block < 3; block++) {
@@ -276,7 +296,7 @@ export default async function play(ctx) {
   await loadDungeonStyles();
   await intro(root, {
     title: 'LINT DUNGEON',
-    story: `${scan.stats.problems} lint findings across ${scan.stats.files} files have become monsters. Clear a short stage of two rules, then explore a new castle wing. Every defeated monster performs the lint action you chose on the real project.`,
+    story: `${scan.stats.problems} lint findings across ${scan.stats.files} files have become monsters. Clear short stages of two rules to travel through the castle's themed wings. Each defeat performs your chosen real lint action; boss rank rises as you beat enemies, with health and speed increases capped.`,
     guide: [
       { key: '1 + X', label: 'Fix Beam', description: 'Runs ESLint autofix for this rule. Only fixable findings take damage.' },
       { key: '2 + X', label: 'Hush Whip', description: 'Adds marked eslint-disable comments for the rule in affected files.' },
@@ -332,7 +352,8 @@ export default async function play(ctx) {
     level = buildLevel(groups, `floor${floor}`);
     foes = level.foes.map((f) => {
       const hpMax = bossHp(f.group.count);
-      return { ...f, ...SIZE[f.kind], vx: f.kind === 'crawler' ? 28 + floor * 5 : 0, vy: 0, baseY: f.y, hp: hpMax, max: hpMax, by: null, flash: 0, immune: 0, phase: Math.random() * 6, hop: Math.max(0.8, 2 - floor * 0.15), windup: 0, dash: 0, dashDir: 1, cooldown: 1.4 };
+      const bossBonus = f.kind === 'boss' ? Math.min(2, Math.floor(slain / 3)) : 0;
+      return { ...f, ...SIZE[f.kind], vx: f.kind === 'crawler' ? 28 + floor * 5 : 0, vy: 0, baseY: f.y, hp: hpMax + bossBonus, max: hpMax + bossBonus, bossBaseHp: hpMax, bossBonus, bossLevel: Math.min(6, 1 + slain), by: null, flash: 0, immune: 0, phase: Math.random() * 6, hop: Math.max(1.35, 2 - floor * 0.1 - Math.min(0.45, slain * 0.06)), windup: 0, dash: 0, dashDir: 1, cooldown: 1.4 };
     });
     candles = level.candles.map((c) => ({ ...c, w: 4, h: 6, lit: true }));
     pickups = [];
@@ -400,6 +421,16 @@ export default async function play(ctx) {
     foes = foes.filter((f) => f !== foe);
     slain++;
     sent++;
+    for (const boss of foes.filter((f) => f.kind === 'boss')) {
+      const nextBonus = Math.min(2, Math.floor(slain / 3));
+      const extraHp = Math.max(0, nextBonus - boss.bossBonus);
+      boss.bossBonus = nextBonus;
+      boss.max = boss.bossBaseHp + nextBonus;
+      boss.hp = Math.min(boss.max, boss.hp + extraHp);
+      boss.bossLevel = Math.min(6, 1 + slain);
+      fx.float(boss.x + boss.w / 2, boss.y - 10, `BOSS LEVEL ${boss.bossLevel}`, '#ffb67d', 7);
+      announce(`Boss level increased to ${boss.bossLevel}. It moves faster${extraHp ? ' and gains a heart' : ''}.`);
+    }
     if (spell === 'log') shelved.add(foe.group.rule);
     shake = reducedMotion ? 0 : 0.15;
     fx.burst(foe.x + foe.w / 2, foe.y + foe.h / 2, COLOR[spell], 26, 110);
@@ -590,13 +621,13 @@ export default async function play(ctx) {
           f.windup -= dt;
           if (f.windup <= 0) f.dash = 0.42;
         } else if (f.dash > 0) {
-          dx = f.dashDir * (125 + floor * 7);
+        dx = f.dashDir * (125 + floor * 7 + Math.min(8, slain));
           f.dash -= dt;
         } else {
           if (near) dx = Math.sign(player.x - f.x) * (18 + floor * 2);
           if (near && Math.abs(player.x - f.x) < 132 && f.cooldown <= 0) {
             f.dashDir = Math.sign(player.x - f.x) || 1;
-            f.windup = 0.55;
+            f.windup = Math.max(0.45, 0.55 - Math.min(0.1, slain * 0.01));
             f.cooldown = 2.1;
             fx.float(f.x + f.w / 2, f.y - 8, 'CHARGING!', '#ff9b74', 7);
           }
@@ -610,12 +641,12 @@ export default async function play(ctx) {
         f.hop -= dt;
         f.vy += PHYS.gravity * dt;
         const dir = near ? Math.sign(player.x - f.x) : 0;
-        const m = moveBox(level, f, dir * (22 + floor * 3) * dt, f.vy * dt);
+        const m = moveBox(level, f, dir * (22 + floor * 3 + Math.min(8, slain)) * dt, f.vy * dt);
         if (m.onGround) {
           f.vy = 0;
           if (f.hop <= 0 && near) {
-            f.vy = -230;
-            f.hop = Math.max(0.9, 2.2 - floor * 0.15);
+            f.vy = -(230 + Math.min(14, slain));
+            f.hop = Math.max(1.2, 2.2 - floor * 0.1 - Math.min(0.55, slain * 0.07));
           }
         }
         f.x = m.x;
@@ -735,18 +766,39 @@ export default async function play(ctx) {
     g.restore();
 
     // ---------- screen-space overlay: labels, hearts, minimap ----------
-    g.textAlign = 'center';
-    g.font = '600 11px "IBM Plex Mono", monospace';
-    for (const f of foes) {
+    const foeNames = { crawler: 'MOSS CRAWLER', bat: 'DUSK BAT', wisp: 'MOON WISP', sentinel: 'RUNE SENTINEL', boss: 'WARDEN' };
+    const labelCards = [];
+    const visibleFoes = foes.filter((f) => {
       const sx = ox + (f.x + f.w / 2 - cam) * scale;
-      if (sx < ox - 60 || sx > ox + VW * scale + 60) continue;
-      const label = `${truncate(f.group.rule, 20)} ×${f.group.count}`;
-      const sy = oy + (f.y - 18) * scale;
-      const w = g.measureText(label).width + 10;
-      g.fillStyle = 'rgba(255,253,248,0.92)';
-      g.fillRect(sx - w / 2, sy - 13, w, 16);
-      g.fillStyle = '#1d1b16';
-      g.fillText(label, sx, sy);
+      return sx >= ox - 60 && sx <= ox + VW * scale + 60;
+    }).sort((a, b) => a.x - b.x);
+    for (const f of visibleFoes) {
+      const sx = ox + (f.x + f.w / 2 - cam) * scale;
+      const title = f.kind === 'boss' ? `${foeNames.boss} · LEVEL ${String(f.bossLevel).padStart(2, '0')}` : foeNames[f.kind];
+      const ruleLabel = `${truncate(f.group.rule, 18)}  ×${f.group.count}`;
+      g.font = '700 10px "IBM Plex Mono", monospace';
+      const titleWidth = g.measureText(title).width;
+      g.font = '600 11px "IBM Plex Mono", monospace';
+      const ruleWidth = g.measureText(ruleLabel).width;
+      const w = Math.min(230, Math.max(150, titleWidth + 18, ruleWidth + 20));
+      const h = 36;
+      const left = Math.max(ox + 6, Math.min(ox + VW * scale - w - 6, sx - w / 2));
+      let top = Math.max(oy + 39, oy + (f.y - 23) * scale - h - 5);
+      for (const card of labelCards) {
+        const horizontalOverlap = left < card.right && left + w > card.left;
+        const verticalOverlap = top < card.bottom && top + h > card.top;
+        if (!horizontalOverlap || !verticalOverlap) continue;
+        const above = card.top - h - 4;
+        top = above >= oy + 39 ? above : card.bottom + 4;
+      }
+      labelCards.push({ left, right: left + w, top, bottom: top + h });
+      const border = f.group.fixable ? '#62e0ad' : f.group.rule === 'parse-error' ? '#ff826f' : '#d9a7ff';
+      g.fillStyle = 'rgba(13,17,29,.96)'; g.beginPath(); g.roundRect(left, top, w, h, 7); g.fill();
+      g.strokeStyle = border; g.lineWidth = 1.5; g.stroke();
+      g.fillStyle = border; g.beginPath(); g.roundRect(left + 7, top + 7, 3, h - 14, 1.5); g.fill();
+      g.textAlign = 'left'; g.fillStyle = '#fff8e8'; g.font = '700 10px "IBM Plex Mono", monospace'; g.fillText(title, left + 16, top + 14);
+      g.fillStyle = '#d7e3f4'; g.font = '600 11px "IBM Plex Mono", monospace'; g.fillText(ruleLabel, left + 16, top + 29);
+      g.strokeStyle = border; g.lineWidth = 1; g.beginPath(); g.moveTo(sx, top + h); g.lineTo(sx, top + h + 5); g.stroke();
     }
     g.fillStyle = 'rgba(15,17,28,.88)'; g.beginPath(); g.roundRect(ox + 8, oy + 7, 104, 26, 7); g.fill();
     g.fillStyle = '#f2ead8'; g.font = '700 7px "IBM Plex Mono", monospace'; g.textAlign = 'left'; g.fillText('HP', ox + 15, oy + 23);
