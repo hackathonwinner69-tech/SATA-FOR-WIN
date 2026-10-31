@@ -72,6 +72,8 @@ export function createFilesChore({ root, dryRun = false }) {
     id: 'files',
     title: 'Folder Frenzy',
     chore: 'Sort a messy folder',
+    game: 'frenzy',
+    unit: 'loose files',
     target: root,
     actions: FILE_ACTIONS,
 
@@ -156,7 +158,7 @@ export function createFilesChore({ root, dryRun = false }) {
       groups.sort((a, b) => b.count - a.count);
       return {
         groups,
-        stats: { files: files.length, bytes: files.reduce((s, f) => s + f.size, 0), duplicates: claimed.size },
+        stats: { files: files.length, bytes: files.reduce((s, f) => s + f.size, 0), duplicates: claimed.size, remaining: files.length },
       };
     },
 

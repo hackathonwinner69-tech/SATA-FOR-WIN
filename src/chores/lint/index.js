@@ -95,6 +95,8 @@ export function createLintChore({ root, dryRun = false }) {
     id: 'lint',
     title: 'Lint Dungeon',
     chore: 'Fix lint errors',
+    game: 'dungeon',
+    unit: 'lint problems',
     target: root,
     actions: LINT_ACTIONS,
 
@@ -131,6 +133,7 @@ export function createLintChore({ root, dryRun = false }) {
         groups,
         stats: {
           problems: groups.reduce((s, g) => s + g.count, 0),
+          remaining: groups.reduce((s, g) => s + g.count, 0),
           fixable: groups.reduce((s, g) => s + g.fixable, 0),
           files: results.length,
           engine: engine.source,

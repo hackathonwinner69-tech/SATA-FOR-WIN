@@ -205,6 +205,8 @@ export function createExpensesChore({ csvPath, outDir, dryRun = false }) {
     id: 'expenses',
     title: 'Receipt Rush',
     chore: 'Review your expenses',
+    game: 'receipts',
+    unit: 'unfiled transactions',
     target: csvPath,
     actions: [...CATEGORIES.map((c) => ({ id: `cat:${c.id}`, label: c.id, key: c.key, color: c.color })), { id: 'flag', label: 'Flag for review', key: 'F', color: '#ef4444' }],
     outputs: out,
@@ -217,7 +219,7 @@ export function createExpensesChore({ csvPath, outDir, dryRun = false }) {
       const groups = groupByMerchant(open, rules);
       return {
         groups,
-        stats: { transactions: data.txns.length, open: open.length, merchants: groups.length, spend: Math.round(data.txns.reduce((s, t) => s + Math.min(t.amount, 0), 0)) },
+        stats: { transactions: data.txns.length, open: open.length, remaining: open.length, merchants: groups.length, spend: Math.round(data.txns.reduce((s, t) => s + Math.min(t.amount, 0), 0)) },
       };
     },
 

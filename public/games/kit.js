@@ -1,6 +1,9 @@
 // Bits every cabinet shares: a crisp full-size canvas, a frame loop,
 // keyboard input, overlays and a little particle fizz.
 
+/** Players who ask the OS for less motion get fewer particles and no screen shake. */
+export const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+
 export function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
@@ -54,13 +57,20 @@ export function keyboard(onPress) {
 export function overlay(root, html, buttons = []) {
   const el = document.createElement('div');
   el.className = 'overlay';
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-modal', 'true');
   el.innerHTML = `<div class="card">${html}<div class="actions"></div></div>`;
+  const heading = el.querySelector('h2');
+  if (heading) {
+    heading.id = `ov-${Math.random().toString(36).slice(2)}`;
+    el.setAttribute('aria-labelledby', heading.id);
+  }
   const actions = el.querySelector('.actions');
   for (const b of buttons) {
     const btn = document.createElement('button');
-    btn.className = b.ghost ? 'ghost' : 'big';
+    btn.type = 'button';
+    btn.className = b.ghost ? 'btn quiet' : 'btn big';
     btn.textContent = b.label;
-    btn.style.margin = '6px';
     btn.addEventListener('click', () => {
       el.remove();
       b.onClick?.();
@@ -68,7 +78,7 @@ export function overlay(root, html, buttons = []) {
     actions.append(btn);
   }
   root.append(el);
-  el.querySelector('.big')?.focus();
+  el.querySelector('.btn.big, .btn')?.focus();
   return el;
 }
 
@@ -94,6 +104,7 @@ export class Fx {
     this.texts = [];
   }
   burst(x, y, color, n = 24, speed = 220) {
+    if (reducedMotion) n = Math.min(n, 6);
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const v = speed * (0.3 + Math.random());
@@ -165,7 +176,9 @@ export function actionBar(root, actions, onPick) {
   bar.className = 'bar';
   for (const a of actions) {
     const b = document.createElement('button');
+    b.type = 'button';
     b.dataset.id = a.id;
+    b.setAttribute('aria-pressed', 'false');
     b.style.setProperty('--c', a.color ?? '#22d3ee');
     b.innerHTML = `<i></i>${a.key ? `<kbd>${esc(a.key)}</kbd>` : ''} ${esc(a.label)}`;
     b.addEventListener('click', (e) => {
@@ -178,7 +191,7 @@ export function actionBar(root, actions, onPick) {
   return {
     el: bar,
     select(id) {
-      for (const b of bar.children) b.classList.toggle('on', b.dataset.id === id);
+      for (const b of bar.children) b.setAttribute('aria-pressed', String(b.dataset.id === id));
     },
   };
 }

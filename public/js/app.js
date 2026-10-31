@@ -1,143 +1,172 @@
-// The arcade floor: cabinets, the live log, and launching games.
+// The arcade floor: the backlog, the ledger, and launching games.
 import { api, fmt, listen } from './api.js';
+import { spriteSvg } from './sprites.js';
 
-const CABINETS = {
-  inbox: {
-    icon: '👾',
-    accent: '#22d3ee',
-    game: '/games/invaders.js',
-    how: 'Senders descend as invaders. Blast them with the archive laser, trash torpedo or unsubscribe EMP: every hit moves all of that sender’s mail.',
+export const CABINETS = {
+  invaders: {
+    accent: '#2b59d9',
+    module: '/games/invaders.js',
+    what: 'Each invader is one sender. One hit archives, trashes or unsubscribes all of its mail.',
   },
-  files: {
-    icon: '📦',
-    accent: '#a3e635',
-    game: '/games/frenzy.js',
-    how: 'Crates of look-alike files fall towards the bins. Steer each one into Images, Documents, Installers... and the files really move.',
-  },
-  expenses: {
-    icon: '🧾',
-    accent: '#fbbf24',
-    game: '/games/receipts.js',
+  frenzy: {
+    accent: '#f2b632',
+    module: '/games/frenzy.js',
+    what: 'Grab crates of look-alike files and run them to the right bin before the dust bunnies catch you.',
     toasts: 'bottom-left',
-    how: 'Merchant cards fly in against the clock. File each into a category and your categorised CSV, report and rules write themselves.',
   },
-  lint: {
-    icon: '🐉',
-    accent: '#f472b6',
-    game: '/games/dungeon.js',
-    toasts: 'bottom-right',
-    how: 'A dungeon crawl where every broken lint rule is a monster. Slaying one runs ESLint’s autofix for that rule across the project.',
+  receipts: {
+    accent: '#12895f',
+    module: '/games/receipts.js',
+    what: 'Sprint through the checkout gates. Each gate you take files every charge from one merchant.',
+  },
+  dungeon: {
+    accent: '#9b3d78',
+    module: '/games/dungeon.js',
+    what: 'Each lint rule is a boss. Autofix rounds burn away what ESLint can fix, for real.',
   },
 };
 
 const IMPACT_LABELS = {
-  archived: (v) => `${fmt.n(v)} emails archived`,
+  archived: (v) => `${fmt.n(v)} archived`,
   trashed: (v) => `${fmt.n(v)} trashed`,
-  unsubscribed: (v) => `${fmt.n(v)} lists unsubscribed`,
-  kept: (v) => `${fmt.n(v)} kept`,
+  unsubscribed: (v) => `${fmt.n(v)} unsubscribed`,
   moved: (v) => `${fmt.n(v)} files sorted`,
   bytes: (v) => `${fmt.bytes(v)} tidied`,
-  categorized: (v) => `${fmt.n(v)} transactions filed`,
-  dollars: (v) => `${fmt.money(v)} reviewed`,
+  categorized: (v) => `${fmt.n(v)} filed`,
   flagged: (v) => `${fmt.n(v)} flagged`,
-  fixed: (v) => `${fmt.n(v)} lint problems fixed`,
+  fixed: (v) => `${fmt.n(v)} fixed`,
   silenced: (v) => `${fmt.n(v)} silenced`,
   logged: (v) => `${fmt.n(v)} logged`,
-  files: () => null,
 };
 
 export function describeImpact(impact = {}) {
   return Object.entries(impact)
+    .filter(([, v]) => v > 0)
     .map(([k, v]) => IMPACT_LABELS[k]?.(v))
     .filter(Boolean);
 }
 
 const $ = (id) => document.getElementById(id);
-let state = null;
-let current = null; // { id, cleanup, impactListeners }
-const logEntries = new Map();
-const activeJobs = new Set();
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-}
+let state = null;
+let current = null; // { id, cleanup, impactListeners, opener }
+const ledger = new Map();
+const activeJobs = new Set();
 
 function shortPath(p) {
   const parts = String(p).split(/[/\\]/).filter(Boolean);
   return parts.length > 3 ? `…/${parts.slice(-3).join('/')}` : p;
 }
 
-function renderHub() {
+export function announce(message) {
+  // Re-set the text so repeated identical messages are still read out.
+  const el = $('announcer');
+  el.textContent = '';
+  requestAnimationFrame(() => (el.textContent = message));
+}
+
+function renderTally() {
+  const parts = state.chores.filter((c) => c.backlog).map((c) => `${fmt.n(c.backlog.remaining)} ${c.unit}`);
+  $('tally').textContent = parts.length ? parts.join(' · ') : 'Counting your chores…';
+}
+
+function renderMachines() {
   const mode = $('mode');
-  mode.textContent = { demo: 'DEMO SANDBOX', live: 'LIVE', 'dry-run': 'DRY RUN' }[state.mode];
-  mode.className = `badge ${state.mode === 'live' ? 'live' : 'demo'}`;
-  $('cabinets').innerHTML = state.chores
+  mode.textContent = { demo: 'Demo sandbox', live: 'Live', 'dry-run': 'Dry run' }[state.mode];
+  mode.className = `chip${state.mode === 'live' ? ' live' : ''}`;
+  $('machines').innerHTML = state.chores
     .map((c) => {
-      const meta = CABINETS[c.id];
+      const meta = CABINETS[c.game];
+      const b = c.backlog;
+      const handled = b ? Math.max(0, b.baseline - b.remaining) : 0;
+      const pct = b?.baseline ? Math.round((handled / b.baseline) * 100) : 0;
       const impact = describeImpact(c.impact);
-      return `<button class="cabinet" data-id="${c.id}" style="--accent:${meta.accent}">
-        <span class="icon">${meta.icon}</span>
-        <h3>${esc(c.title)}</h3>
-        <span class="chore">${esc(c.chore)}</span>
-        <span class="target" title="${esc(c.target)}">${esc(shortPath(c.target))}</span>
-        <span class="how">${esc(meta.how)}</span>
-        <span class="impact">${esc(impact.slice(0, 2).join(' · '))}</span>
-        <span class="play">▶ INSERT COIN</span>
-      </button>`;
+      return `<li class="machine" style="--accent:${meta.accent}" aria-labelledby="m-${c.id}">
+        <div class="art">${spriteSvg(c.game, { size: 52 })}</div>
+        <div>
+          <h2 id="m-${c.id}">${esc(c.title)}</h2>
+          <p class="what">${esc(meta.what)}</p>
+          <div class="count">${b ? `<b>${fmt.n(b.remaining)}</b><span>${esc(c.unit)} left</span>` : c.remote ? '<span>Not scanned yet</span>' : '<span>Counting…</span>'}</div>
+          <div class="meter" role="progressbar" aria-label="${esc(c.chore)} progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div>
+          <p class="done">${esc(impact.slice(0, 3).join(' · '))}</p>
+          <p class="source" title="${esc(c.target)}">${esc(shortPath(c.target))}</p>
+        </div>
+        <div class="controls">
+          <button class="btn big" type="button" data-play="${c.id}">Play</button>
+          <button class="btn quiet" type="button" data-calm="${c.id}" aria-label="Calm mode for ${esc(c.title)}: no timer, works with a keyboard and screen reader">Calm mode</button>
+        </div>
+      </li>`;
     })
     .join('');
-  const all = state.chores.flatMap((c) => describeImpact(c.impact).map((t) => ({ t, c })));
-  $('totals').innerHTML = all.length
-    ? all
-        .map(({ t }) => {
-          const [num, ...rest] = t.split(' ');
-          return `<div class="total"><b>${esc(num)}</b><span>${esc(rest.join(' '))}</span></div>`;
-        })
-        .join('')
-    : '';
-  for (const el of document.querySelectorAll('.cabinet')) el.addEventListener('click', () => launch(el.dataset.id));
+  for (const el of document.querySelectorAll('[data-play]')) el.addEventListener('click', () => launch(el.dataset.play, 'game', el));
+  for (const el of document.querySelectorAll('[data-calm]')) el.addEventListener('click', () => launch(el.dataset.calm, 'calm', el));
+  renderTally();
+}
+
+/** Count every local chore so the board shows the real backlog straight away. */
+async function countAll() {
+  for (const c of state.chores) {
+    if (c.remote) continue;
+    try {
+      const { stats } = await api(`/chores/${c.id}/scan`, { method: 'POST' });
+      c.backlog = { baseline: stats.baseline, remaining: stats.remaining };
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+  if (!current) renderMachines();
 }
 
 export function toast(message, error = false) {
+  if (!current) return;
   const el = document.createElement('div');
   el.className = `toast${error ? ' err' : ''}`;
   el.textContent = message;
   $('toasts').append(el);
-  while ($('toasts').children.length > 5) $('toasts').firstChild.remove();
-  setTimeout(() => el.remove(), error ? 6000 : 3500);
+  while ($('toasts').children.length > 4) $('toasts').firstChild.remove();
+  setTimeout(() => el.remove(), error ? 6000 : 3000);
 }
 
-async function launch(id) {
+async function launch(id, mode, opener) {
   const chore = state.chores.find((c) => c.id === id);
-  const meta = CABINETS[id];
-  $('hub').classList.add('hidden');
+  const meta = CABINETS[chore.game];
+  $('floor').classList.add('hidden');
   $('stage').classList.remove('hidden');
-  $('hud-title').textContent = `${meta.icon} ${chore.title}`;
-  $('game').innerHTML = '';
   $('stage').dataset.toasts = meta.toasts ?? 'top-right';
-  const impactListeners = new Set();
-  current = { id, impactListeners, cleanup: null };
-  const setStats = (items) => {
-    $('hud-stats').innerHTML = items.map(([k, v]) => `<span>${esc(k)} <b>${esc(v)}</b></span>`).join('');
-  };
+  $('hud-title').textContent = mode === 'calm' ? `${chore.title}: calm mode` : chore.title;
+  $('hud-stats').innerHTML = '';
+  const screen = $('game');
+  screen.innerHTML = '';
+  screen.className = mode === 'calm' ? 'screen paper' : 'screen';
+  const session = { id, cleanup: null, impactListeners: new Set(), opener };
+  current = session;
+  $('exit').focus();
+
   const ctx = {
-    root: $('game'),
+    root: screen,
     chore,
     toast,
-    setStats,
-    scan: () => api(`/chores/${id}/scan`, { method: 'POST' }),
+    announce,
+    setStats(items) {
+      $('hud-stats').innerHTML = items.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('');
+    },
+    scan: async () => {
+      const result = await api(`/chores/${id}/scan`, { method: 'POST' });
+      chore.backlog = { baseline: result.stats.baseline, remaining: result.stats.remaining };
+      return result;
+    },
     act: (groupId, action) =>
       api(`/chores/${id}/act`, { method: 'POST', body: { groupId, action } }).catch((err) => {
         toast(err.message, true);
         throw err;
       }),
-    onImpact: (fn) => impactListeners.add(fn),
-    impact: () => state.chores.find((c) => c.id === id).impact,
+    onImpact: (fn) => session.impactListeners.add(fn),
+    impact: () => chore.impact,
     exit,
   };
   try {
-    const session = current;
-    const mod = await import(meta.game);
+    const mod = await import(mode === 'calm' ? '/games/calm.js' : meta.module);
     const cleanup = await mod.default(ctx);
     // The player may have left during the intro; tidy up the game they abandoned.
     if (current === session) session.cleanup = cleanup;
@@ -148,89 +177,109 @@ async function launch(id) {
 }
 
 function exit() {
-  current?.cleanup?.();
+  if (!current) return;
+  const { opener } = current;
+  current.cleanup?.();
   current = null;
   $('stage').classList.add('hidden');
-  $('hub').classList.remove('hidden');
-  renderHub();
+  $('floor').classList.remove('hidden');
+  renderMachines();
+  countAll();
+  // Put focus back on the button that opened the game.
+  const again = opener && document.querySelector(`[data-${opener.dataset.play ? 'play' : 'calm'}="${opener.dataset.play ?? opener.dataset.calm}"]`);
+  (again ?? $('main')).focus();
 }
 
-function renderLogEntry(entry) {
+function renderLedgerEntry(entry) {
+  const list = $('ledger-list');
+  list.querySelector('.empty')?.remove();
   let li = document.getElementById(`log-${entry.id}`);
   if (!li) {
     li = document.createElement('li');
     li.id = `log-${entry.id}`;
-    $('log-list').prepend(li);
+    list.prepend(li);
   }
-  const time = new Date(entry.at).toLocaleTimeString();
+  const time = new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const chore = state?.chores.find((c) => c.id === entry.chore);
   li.className = entry.undone ? 'undone' : '';
-  li.innerHTML = `<div class="what">${esc(entry.label)}<small>${esc(entry.chore)} · ${time}${entry.dryRun ? ' · dry run' : ''}</small></div>
-    ${entry.undoable && !entry.undone ? '<button>Undo</button>' : ''}`;
+  li.innerHTML = `<div class="what">${esc(entry.label)}<small>${esc(chore?.title ?? entry.chore)} · ${time}${entry.dryRun ? ' · dry run' : ''}${entry.undone ? ' · undone' : ''}</small></div>
+    ${entry.undoable && !entry.undone ? `<button type="button" aria-label="Undo: ${esc(entry.label)}">Undo</button>` : ''}`;
   li.querySelector('button')?.addEventListener('click', async (e) => {
-    e.target.disabled = true;
-    e.target.textContent = '…';
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = '…';
     try {
       await api(`/journal/${entry.id}/undo`, { method: 'POST' });
     } catch (err) {
-      e.target.disabled = false;
-      e.target.textContent = 'Undo';
+      btn.disabled = false;
+      btn.textContent = 'Undo';
+      announce(`Undo failed: ${err.message}`);
       alert(err.message);
     }
   });
-  $('log-count').textContent = logEntries.size;
 }
 
 function onEvent(event) {
-  if (event.type === 'hello') {
+  if (event.type === 'hello' || event.type === 'state') {
+    const backlogs = new Map((state?.chores ?? []).map((c) => [c.id, c.backlog]));
     state = event.state;
-    if (!current) renderHub();
+    for (const c of state.chores) c.backlog ??= backlogs.get(c.id) ?? null;
+    if (!current) renderMachines();
+    if (event.type === 'hello') countAll();
   }
   if (event.type === 'job') {
     if (event.job.status === 'queued' || event.job.status === 'running') activeJobs.add(event.job.id);
     else activeJobs.delete(event.job.id);
-    const worker = $('worker');
     const n = activeJobs.size;
-    worker.textContent = n ? `${n} change${n > 1 ? 's' : ''} running in background` : 'idle';
+    const worker = $('worker');
+    worker.textContent = n ? `Worker: ${n} change${n > 1 ? 's' : ''} running` : 'Worker idle';
     worker.classList.toggle('busy', n > 0);
-    if (event.job.status === 'failed') toast(`${event.job.label}: ${event.job.error}`, true);
+    if (event.job.status === 'failed') {
+      toast(`${event.job.label}: ${event.job.error}`, true);
+      announce(`Failed: ${event.job.label}. ${event.job.error}`);
+    }
   }
   if (event.type === 'change') {
     const chore = state.chores.find((c) => c.id === event.chore);
     if (chore) chore.impact = event.impact;
-    logEntries.set(event.entry.id, event.entry);
-    renderLogEntry(event.entry);
+    ledger.set(event.entry.id, event.entry);
+    renderLedgerEntry(event.entry);
+    announce(event.entry.label);
     if (current?.id === event.chore) {
-      toast(`✔ ${event.entry.label}`);
+      toast(`✓ ${event.entry.label}`);
       for (const fn of current.impactListeners) fn(event.impact, event.entry);
-    } else if (!current) renderHub();
+    }
   }
   if (event.type === 'undo') {
     const chore = state.chores.find((c) => c.id === event.chore);
     if (chore) chore.impact = event.impact;
     if (current?.id === event.chore) for (const fn of current.impactListeners) fn(event.impact, null);
-    const entry = logEntries.get(event.entryId);
+    const entry = ledger.get(event.entryId);
     if (entry) {
       entry.undone = true;
-      renderLogEntry(entry);
+      renderLedgerEntry(entry);
     }
     toast(`↩ ${event.summary}`);
+    announce(`Undone: ${event.summary}`);
+    if (!current) countAll();
   }
 }
 
 async function boot() {
-  for (const entry of (await api('/journal')).reverse()) {
-    logEntries.set(entry.id, entry);
-    renderLogEntry(entry);
+  $('logo').innerHTML = spriteSvg('invaders', { size: 36 });
+  const entries = await api('/journal');
+  if (!entries.length) $('ledger-list').innerHTML = '<li class="empty">Nothing yet. Play a game and the real changes show up here.</li>';
+  for (const entry of entries.reverse()) {
+    ledger.set(entry.id, entry);
+    renderLedgerEntry(entry);
   }
   listen(onEvent);
-  $('log-toggle').addEventListener('click', () => $('log').classList.toggle('hidden'));
-  $('log-close').addEventListener('click', () => $('log').classList.add('hidden'));
   $('exit').addEventListener('click', exit);
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && current) exit();
+    if (e.key === 'Escape' && current && !document.querySelector('.overlay')) exit();
   });
 }
 
 boot().catch((err) => {
-  document.body.insertAdjacentHTML('beforeend', `<p style="padding:20px;color:#f43f5e">ChoreCade could not reach its server: ${esc(err.message)}</p>`);
+  $('tally').textContent = `ChoreCade could not reach its server: ${err.message}`;
 });

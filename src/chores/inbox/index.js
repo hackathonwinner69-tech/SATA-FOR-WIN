@@ -68,13 +68,15 @@ export function createInboxChore({ provider, dataDir, dryRun = false, oneClickUn
     id: 'inbox',
     title: 'Inbox Invaders',
     chore: 'Triage your inbox',
+    game: 'invaders',
+    unit: 'emails in the inbox',
     target: provider.describe(),
     actions: INBOX_ACTIONS,
 
     async scan() {
       const messages = await provider.list();
       const groups = groupBySender(messages);
-      return { groups, stats: { messages: messages.length, senders: groups.length } };
+      return { groups, stats: { messages: messages.length, senders: groups.length, remaining: messages.length } };
     },
 
     async apply(group, action) {

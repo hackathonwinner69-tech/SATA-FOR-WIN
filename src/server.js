@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { hostGuard, tokenGuard } from './core/safety.js';
 
 const PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
+const FONTS = fileURLToPath(new URL('../node_modules/@fontsource/', import.meta.url));
 
 export function createServer(arcade, { port, token = randomBytes(24).toString('hex') }) {
   const app = express();
@@ -29,6 +30,10 @@ export function createServer(arcade, { port, token = randomBytes(24).toString('h
     res.type('html').set('cache-control', 'no-store').send(html.replace('__CHORECADE_TOKEN__', token));
   });
   app.use(express.static(PUBLIC, { index: false }));
+  // Self-hosted Google Fonts (Silkscreen, IBM Plex): no third-party requests, works offline.
+  for (const family of ['silkscreen', 'ibm-plex-sans', 'ibm-plex-mono']) {
+    app.use(`/fonts/${family}`, express.static(join(FONTS, family, 'files'), { maxAge: '30d', immutable: true }));
+  }
 
   const api = express.Router();
   api.use(tokenGuard(token));

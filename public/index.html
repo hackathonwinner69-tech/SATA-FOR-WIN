@@ -3,57 +3,63 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="ChoreCade: arcade games that do your digital chores for real. Clear your inbox, sort a folder, review expenses and fix lint by playing." />
+    <meta name="theme-color" content="#f3ede2" />
     <meta name="chorecade-token" content="__CHORECADE_TOKEN__" />
     <title>ChoreCade</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b1020'/%3E%3Cpath d='M8 22l8-12 8 12z' fill='%2322d3ee'/%3E%3C/svg%3E" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8' shape-rendering='crispEdges'%3E%3Cpath fill='%231d1b16' d='M2 0h1v1H2zM9 0h1v1H9zM3 1h1v1H3zM8 1h1v1H8zM2 2h8v1H2zM1 3h10v1H1zM0 4h12v1H0zM0 5h1v2H0zM11 5h1v2h-1zM2 5h8v1H2zM2 6h1v1H2zM9 6h1v1H9zM3 7h2v1H3zM7 7h2v1H7z'/%3E%3C/svg%3E" />
+    <link rel="preload" href="/fonts/silkscreen/silkscreen-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="/css/app.css" />
     <script type="module" src="/js/app.js"></script>
   </head>
   <body>
-    <header class="top">
-      <div class="brand">
-        <span class="logo">▲</span>
-        <div>
-          <h1>ChoreCade</h1>
-          <p>Play a game. Finish a real chore.</p>
-        </div>
-      </div>
-      <div class="status">
-        <span id="mode" class="badge">…</span>
-        <span id="worker" class="worker" title="Changes running in the background">idle</span>
-        <button id="log-toggle" class="ghost">Real-world log <span id="log-count">0</span></button>
-      </div>
+    <a class="skip" href="#main">Skip to the chores</a>
+
+    <header class="masthead">
+      <a class="wordmark" href="/" aria-label="ChoreCade home">
+        <span id="logo" aria-hidden="true"></span>
+        <span><b>CHORECADE</b><span>Your backlog, but it's a game.</span></span>
+      </a>
+      <nav aria-label="Session">
+        <span id="mode" class="chip">…</span>
+        <span id="google-slot"></span>
+        <span id="worker" class="worker" role="status" aria-live="polite">Worker idle</span>
+      </nav>
     </header>
 
-    <main id="hub">
-      <section class="intro">
-        <h2>Your chores are the levels.</h2>
-        <p>
-          Every shot, drop and swipe is sent to a background worker that does the real thing: archives the mail, moves the
-          file, files the expense, fixes the lint. All of it is journaled, and anything can be undone from the log.
-        </p>
-      </section>
-      <section id="cabinets" class="cabinets"></section>
-      <section class="totals" id="totals"></section>
-    </main>
+    <div class="floor" id="floor">
+      <main id="main" tabindex="-1">
+        <section class="lede" aria-labelledby="lede-title">
+          <h1 id="lede-title">Today's backlog</h1>
+          <p>
+            Every move you make in a game is a real change: shots archive mail, drops move files, swipes file
+            expenses, kills fix lint. A background worker does the work while you play, and every change can be undone
+            from the ledger.
+          </p>
+          <p class="tally" id="tally">Counting your chores…</p>
+        </section>
+        <ul class="machines" id="machines" aria-label="Chores"></ul>
+      </main>
 
-    <section id="stage" class="stage hidden" aria-live="polite">
+      <aside class="ledger" aria-labelledby="ledger-title">
+        <header>
+          <h2 id="ledger-title">Ledger</h2>
+          <p>What really happened on your machine, newest first.</p>
+        </header>
+        <ol id="ledger-list" aria-live="off"></ol>
+      </aside>
+    </div>
+
+    <section id="stage" class="stage hidden" aria-labelledby="hud-title">
       <div class="hud">
-        <button id="exit" class="ghost">← Arcade</button>
-        <div id="hud-title" class="hud-title"></div>
-        <div id="hud-stats" class="hud-stats"></div>
+        <button id="exit" class="btn quiet" type="button">← Back <kbd>Esc</kbd></button>
+        <h2 id="hud-title" class="hud-title"></h2>
+        <dl id="hud-stats" class="hud-stats" aria-label="Score"></dl>
       </div>
-      <div id="game" class="game"></div>
-      <div id="toasts" class="toasts"></div>
+      <div id="game" class="screen"></div>
+      <div id="toasts" class="toasts" aria-hidden="true"></div>
     </section>
 
-    <aside id="log" class="log hidden">
-      <header>
-        <h3>Real-world log</h3>
-        <button id="log-close" class="ghost">×</button>
-      </header>
-      <p class="hint">What actually happened on your machine, newest first.</p>
-      <ol id="log-list"></ol>
-    </aside>
+    <div id="announcer" class="sr-only" role="status" aria-live="polite"></div>
   </body>
 </html>

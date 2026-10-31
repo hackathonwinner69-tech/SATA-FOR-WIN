@@ -14,8 +14,16 @@ export class Arcade extends EventEmitter {
     this.mode = mode; // 'demo' | 'live' | 'dry-run'
     this.advisor = advisor;
     this.scans = new Map(); // chore id -> Map(group id -> group)
+    this.backlog = new Map(); // chore id -> { baseline, remaining }
     this.impact = Object.fromEntries(chores.map((c) => [c.id, {}]));
     this.queue.on('job', (job) => this.emit('event', { type: 'job', job }));
+  }
+
+  /** Add a chore after start-up, e.g. once a Google account is connected. */
+  addChore(chore) {
+    this.chores.set(chore.id, chore);
+    this.impact[chore.id] ??= {};
+    this.emit('event', { type: 'state', state: this.summary() });
   }
 
   chore(id) {
@@ -33,8 +41,12 @@ export class Arcade extends EventEmitter {
         title: c.title,
         chore: c.chore,
         target: c.target,
+        game: c.game,
+        unit: c.unit,
+        remote: Boolean(c.remote),
         actions: c.actions,
         impact: this.impact[c.id],
+        backlog: this.backlog.get(c.id) ?? null,
       })),
       pending: this.queue.pending(),
     };
@@ -45,6 +57,11 @@ export class Arcade extends EventEmitter {
     const result = await chore.scan();
     if (this.advisor) result.stats.aiAdvised = await this.advisor.advise(chore, result.groups);
     this.scans.set(id, new Map(result.groups.map((g) => [g.id, g])));
+    // The first scan is the baseline progress is measured against.
+    const remaining = result.stats.remaining ?? 0;
+    const baseline = Math.max(this.backlog.get(id)?.baseline ?? 0, remaining);
+    this.backlog.set(id, { baseline, remaining });
+    result.stats.baseline = baseline;
     // Ids can be long lists (thousands of message ids); the page does not need them.
     const groups = result.groups.map(({ ids, rows, files, ...g }) => ({ ...g, size: (ids ?? rows ?? files ?? []).length }));
     return { ...result, groups };
