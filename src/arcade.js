@@ -26,6 +26,13 @@ export class Arcade extends EventEmitter {
     this.emit('event', { type: 'state', state: this.summary() });
   }
 
+  removeChore(id) {
+    if (!this.chores.delete(id)) return;
+    this.scans.delete(id);
+    this.backlog.delete(id);
+    this.emit('event', { type: 'state', state: this.summary() });
+  }
+
   chore(id) {
     const chore = this.chores.get(id);
     if (!chore) throw Object.assign(new Error(`no chore called ${id}`), { status: 404 });

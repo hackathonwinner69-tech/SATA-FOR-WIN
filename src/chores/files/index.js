@@ -66,128 +66,157 @@ function packLabel(name, ext) {
   return `${words} (*.${ext || '?'})`;
 }
 
-export function createFilesChore({ root, dryRun = false }) {
+/**
+ * Turn a flat file list into game-sized groups: exact duplicates first, then
+ * packs of look-alike names, then one-offs folded together per bin.
+ * Each file is { id, name, size, mtime, hash?, binHint? }; groups carry ids.
+ */
+export function groupFiles(files) {
+  const byHash = new Map();
+  for (const f of files) {
+    if (!f.hash) continue;
+    if (!byHash.has(f.hash)) byHash.set(f.hash, []);
+    byHash.get(f.hash).push(f);
+  }
+  const groups = [];
+  const claimed = new Set();
+  // Exact duplicates: keep the oldest copy, offer the rest for trashing.
+  for (const copies of byHash.values()) {
+    if (copies.length < 2) continue;
+    copies.sort((a, b) => a.mtime - b.mtime || a.name.length - b.name.length);
+    const [original, ...extras] = copies;
+    extras.forEach((f) => claimed.add(f.id));
+    groups.push({
+      id: `dupes:${original.hash}`,
+      label: `${extras.length} duplicate${extras.length > 1 ? 's' : ''} of ${original.name}`,
+      detail: extras.map((f) => f.name).join(', '),
+      count: extras.length,
+      bytes: extras.reduce((s, f) => s + f.size, 0),
+      kind: 'duplicate',
+      suggestion: 'trash',
+      risk: 'low',
+      files: extras.map((f) => f.id),
+    });
+  }
+
+  const binOf = (f) => binFor(f.name) ?? f.binHint ?? null;
+  const packs = new Map();
+  for (const f of files) {
+    if (claimed.has(f.id)) continue;
+    const ext = extname(f.name).slice(1).toLowerCase();
+    const key = `${ext}|${namePattern(f.name)}`;
+    if (!packs.has(key)) packs.set(key, []);
+    packs.get(key).push(f);
+  }
+  // Fold one-off files into a pack per bin so the game is not 300 crates.
+  const loose = new Map();
+  for (const [key, pack] of packs) {
+    if (pack.length > 1) continue;
+    packs.delete(key);
+    const bin = binOf(pack[0]) ?? 'unknown';
+    if (!loose.has(bin)) loose.set(bin, []);
+    loose.get(bin).push(pack[0]);
+  }
+  for (const [bin, pack] of loose) packs.set(`*|${bin}`, pack);
+
+  for (const [key, pack] of packs) {
+    const [ext, pattern] = key.split('|');
+    const bin = binOf(pack[0]);
+    groups.push({
+      id: `pack:${key}`,
+      label:
+        ext === '*'
+          ? pattern === 'unknown'
+            ? `${pack.length} mystery file${pack.length > 1 ? 's' : ''}`
+            : `${pack.length} loose ${pattern.toLowerCase()} file${pack.length > 1 ? 's' : ''}`
+          : packLabel(pack[0].name, ext),
+      detail: pack.slice(0, 4).map((f) => f.name).join(', ') + (pack.length > 4 ? ', ...' : ''),
+      count: pack.length,
+      bytes: pack.reduce((s, f) => s + f.size, 0),
+      kind: bin ?? 'unknown',
+      suggestion: bin ? `move:${bin}` : 'keep',
+      risk: bin ? 'low' : 'medium',
+      files: pack.map((f) => f.id),
+    });
+  }
+  groups.sort((a, b) => b.count - a.count);
+  return { groups, duplicates: claimed.size };
+}
+
+/** A folder on this machine. Ids are file names; trash is a folder you can open. */
+export function localFolderStore(root) {
   root = resolve(root);
   return {
-    id: 'files',
-    title: 'Folder Frenzy',
-    chore: 'Sort a messy folder',
-    game: 'frenzy',
-    unit: 'loose files',
-    target: root,
-    actions: FILE_ACTIONS,
-
-    async scan() {
-      const entries = await readdir(root, { withFileTypes: true });
+    kind: 'local',
+    describe: () => root,
+    async list() {
       const files = [];
-      for (const entry of entries) {
+      for (const entry of await readdir(root, { withFileTypes: true })) {
         if (!entry.isFile() || entry.name.startsWith('.')) continue;
         const path = join(root, entry.name);
         const info = await stat(path);
-        files.push({ name: entry.name, size: info.size, mtime: info.mtimeMs });
+        const file = { id: entry.name, name: entry.name, size: info.size, mtime: info.mtimeMs };
+        if (info.size > 0 && info.size <= HASH_LIMIT) file.hash = await hashFile(path);
+        files.push(file);
       }
+      return files;
+    },
+    /** Move files into `bin` (a folder name), or into the trash folder when bin is null. */
+    async move(ids, bin) {
+      const toDir = within(root, bin ?? TRASH_DIR);
+      const moved = [];
+      for (const name of ids) {
+        const from = within(root, name);
+        await assertPlainFile(from);
+        moved.push({ from, to: await safeMove(from, toDir) });
+      }
+      return { moved, where: bin ? `${bin}/` : TRASH_DIR };
+    },
+    async restore({ moved }) {
+      return moveAllBack(moved.map(({ from, to }) => ({ from: within(root, from), to: within(root, to) })));
+    },
+  };
+}
 
-      // Exact duplicates: keep the oldest copy, offer the rest for trashing.
-      const byHash = new Map();
-      for (const f of files) {
-        if (f.size === 0 || f.size > HASH_LIMIT) continue;
-        f.hash = await hashFile(join(root, f.name));
-        if (!byHash.has(f.hash)) byHash.set(f.hash, []);
-        byHash.get(f.hash).push(f);
-      }
-      const groups = [];
-      const claimed = new Set();
-      for (const copies of byHash.values()) {
-        if (copies.length < 2) continue;
-        copies.sort((a, b) => a.mtime - b.mtime || a.name.length - b.name.length);
-        const [original, ...extras] = copies;
-        extras.forEach((f) => claimed.add(f.name));
-        groups.push({
-          id: `dupes:${original.hash}`,
-          label: `${extras.length} duplicate${extras.length > 1 ? 's' : ''} of ${original.name}`,
-          detail: extras.map((f) => f.name).join(', '),
-          count: extras.length,
-          bytes: extras.reduce((s, f) => s + f.size, 0),
-          kind: 'duplicate',
-          suggestion: 'trash',
-          risk: 'low',
-          files: extras.map((f) => f.name),
-        });
-      }
+export function createFilesChore({ root, store = localFolderStore(root), id = 'files', title = 'Folder Frenzy', remote = false, dryRun = false }) {
+  return {
+    id,
+    title,
+    chore: 'Sort a messy folder',
+    game: 'frenzy',
+    unit: 'loose files',
+    remote,
+    target: store.describe(),
+    actions: FILE_ACTIONS,
 
-      // Everything else travels in packs of look-alike names.
-      const packs = new Map();
-      for (const f of files) {
-        if (claimed.has(f.name)) continue;
-        const ext = extname(f.name).slice(1).toLowerCase();
-        const key = `${ext}|${namePattern(f.name)}`;
-        if (!packs.has(key)) packs.set(key, []);
-        packs.get(key).push(f);
-      }
-      // Fold one-off files into a pack per bin so the game is not 300 crates.
-      const loose = new Map();
-      for (const [key, pack] of packs) {
-        if (pack.length > 1) continue;
-        packs.delete(key);
-        const bin = binFor(pack[0].name) ?? 'unknown';
-        if (!loose.has(bin)) loose.set(bin, []);
-        loose.get(bin).push(pack[0]);
-      }
-      for (const [bin, pack] of loose) packs.set(`*|${bin}`, pack);
-
-      for (const [key, pack] of packs) {
-        const [ext, pattern] = key.split('|');
-        const bin = binFor(pack[0].name);
-        groups.push({
-          id: `pack:${key}`,
-          label:
-            ext === '*'
-              ? pattern === 'unknown'
-                ? `${pack.length} mystery file${pack.length > 1 ? 's' : ''}`
-                : `${pack.length} loose ${pattern.toLowerCase()} file${pack.length > 1 ? 's' : ''}`
-              : packLabel(pack[0].name, ext),
-          detail: pack.slice(0, 4).map((f) => f.name).join(', ') + (pack.length > 4 ? ', ...' : ''),
-          count: pack.length,
-          bytes: pack.reduce((s, f) => s + f.size, 0),
-          kind: bin ?? 'unknown',
-          suggestion: bin ? `move:${bin}` : 'keep',
-          risk: bin ? 'low' : 'medium',
-          files: pack.map((f) => f.name),
-        });
-      }
-      groups.sort((a, b) => b.count - a.count);
+    async scan() {
+      const files = await store.list();
+      const { groups, duplicates } = groupFiles(files);
       return {
         groups,
-        stats: { files: files.length, bytes: files.reduce((s, f) => s + f.size, 0), duplicates: claimed.size, remaining: files.length },
+        stats: { files: files.length, bytes: files.reduce((s, f) => s + f.size, 0), duplicates, remaining: files.length },
       };
     },
 
     async apply(group, action) {
       const count = group.files.length;
       if (action === 'keep') return { affected: count, summary: `left ${count} files alone`, impact: { kept: count }, undo: null };
-      const bin = action === 'trash' ? TRASH_DIR : action.replace(/^move:/, '');
-      if (action !== 'trash' && !BINS[bin]) throw new Error(`unknown bin ${bin}`);
-      const toDir = within(root, bin);
-      if (dryRun) return { affected: count, summary: `[dry run] would move ${count} files to ${bin}`, impact: {}, undo: null };
-
-      const moved = [];
-      for (const name of group.files) {
-        const from = within(root, name);
-        await assertPlainFile(from);
-        moved.push({ from, to: await safeMove(from, toDir) });
-      }
-      const verb = action === 'trash' ? 'trashed' : 'moved';
+      const bin = action === 'trash' ? null : action.replace(/^move:/, '');
+      if (bin !== null && !BINS[bin]) throw new Error(`unknown bin ${bin}`);
+      if (dryRun) return { affected: count, summary: `[dry run] would move ${count} files to ${bin ?? 'trash'}`, impact: {}, undo: null };
+      const result = await store.move(group.files, bin);
+      const verb = bin ? 'moved' : 'trashed';
       return {
-        affected: moved.length,
-        summary: `${verb} ${moved.length} files ${action === 'trash' ? `into ${TRASH_DIR}` : `to ${bin}/`}`,
-        impact: { [verb]: moved.length, bytes: group.bytes ?? 0 },
-        undo: { moved },
+        affected: count,
+        summary: `${verb} ${count} files ${bin ? 'to' : 'into'} ${result.where}`,
+        impact: { [verb]: count, bytes: group.bytes ?? 0 },
+        undo: result,
       };
     },
 
-    async undo({ moved }) {
-      await moveAllBack(moved.map(({ from, to }) => ({ from: within(root, from), to: within(root, to) })));
-      return { restored: moved.length, summary: `put ${moved.length} files back` };
+    async undo(undo) {
+      const restored = await store.restore(undo);
+      return { restored, summary: `put ${restored} files back` };
     },
   };
 }

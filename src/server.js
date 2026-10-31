@@ -6,11 +6,12 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostGuard, tokenGuard } from './core/safety.js';
+import { mountGoogle } from './google/index.js';
 
 const PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
 const FONTS = fileURLToPath(new URL('../node_modules/@fontsource/', import.meta.url));
 
-export function createServer(arcade, { port, token = randomBytes(24).toString('hex') }) {
+export function createServer(arcade, { port, token = randomBytes(24).toString('hex'), google = null }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(hostGuard(port));
@@ -86,6 +87,7 @@ export function createServer(arcade, { port, token = randomBytes(24).toString('h
     });
   });
 
+  if (google) mountGoogle({ app, api, arcade, port, ...google });
   app.use('/api', api);
   return { app, token };
 }

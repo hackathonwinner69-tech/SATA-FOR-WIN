@@ -13,6 +13,7 @@ import { createFilesChore } from './chores/files/index.js';
 import { createExpensesChore } from './chores/expenses/index.js';
 import { createLintChore } from './chores/lint/index.js';
 import { createAdvisor } from './ai/advisor.js';
+import { GoogleAuth } from './google/auth.js';
 
 const HELP = `ChoreCade: play a game, finish a real chore.
 
@@ -33,11 +34,16 @@ Options
   --ai                  let Claude suggest bins and categories the built-in rules
                         cannot (sends file names and merchant names to the
                         Anthropic API; needs ANTHROPIC_API_KEY or \`ant auth login\`)
+  --gmail-max <n>       newest inbox messages to scan once Google is connected (2000)
+  --drive-folder <id>   Drive folder to sort once Google is connected (My Drive)
   --one-click-unsubscribe
                         send RFC 8058 one-click unsubscribe requests (live mail only)
   --port <n>            default 4747
   --sandbox <dir>       where the demo lives, default ./sandbox
 `;
+
+// Settings such as GOOGLE_CLIENT_ID can live in a .env file next to package.json.
+if (existsSync('.env')) process.loadEnvFile('.env');
 
 const { values } = parseArgs({
   options: {
@@ -50,6 +56,8 @@ const { values } = parseArgs({
     lint: { type: 'string' },
     'dry-run': { type: 'boolean', default: false },
     ai: { type: 'boolean', default: false },
+    'gmail-max': { type: 'string', default: '2000' },
+    'drive-folder': { type: 'string', default: 'root' },
     'one-click-unsubscribe': { type: 'boolean', default: false },
     port: { type: 'string', default: process.env.PORT ?? '4747' },
     sandbox: { type: 'string', default: 'sandbox' },
@@ -105,11 +113,22 @@ if (live) {
 const mode = dryRun ? 'dry-run' : live ? 'live' : 'demo';
 const advisor = values.ai ? createAdvisor() : null;
 const arcade = new Arcade({ chores, journalFile: join(live ? dataDir : resolve(values.sandbox), 'journal.jsonl'), mode, advisor });
-const { app } = createServer(arcade, { port });
+const google = new GoogleAuth({
+  clientId: process.env.GOOGLE_CLIENT_ID,
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  tokenFile: join(dataDir, 'google-token.json'),
+});
+await google.load();
+const { app } = createServer(arcade, {
+  port,
+  google: { auth: google, options: { dataDir, dryRun, gmailMax: Number(values['gmail-max']), driveFolder: values['drive-folder'] } },
+});
 
 app.listen(port, '127.0.0.1', () => {
   console.log(`\nChoreCade (${mode}) at http://localhost:${port}`);
   for (const c of chores) console.log(`  ${c.title.padEnd(16)} ${c.target}`);
+  const googleState = google.connected ? `signed in as ${google.token.email}` : google.configured ? 'ready, sign in from the arcade' : 'not set up (see README: Google services)';
+  console.log(`\nGoogle: ${googleState}`);
   if (advisor) console.log('\nClaude advisor on: file and merchant names are sent to the Anthropic API for suggestions.');
   if (mode === 'live') console.log('\nLive mode: moves change real things. Everything is journaled and undoable from the HUD.');
 });

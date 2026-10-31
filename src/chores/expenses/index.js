@@ -211,6 +211,25 @@ export function createExpensesChore({ csvPath, outDir, dryRun = false }) {
     actions: [...CATEGORIES.map((c) => ({ id: `cat:${c.id}`, label: c.id, key: c.key, color: c.color })), { id: 'flag', label: 'Flag for review', key: 'F', color: '#ef4444' }],
     outputs: out,
 
+    /** The reviewed transactions and per-category totals, ready for a spreadsheet. */
+    async table() {
+      if (!data) await this.scan();
+      const header = [...data.header, 'Category', 'Needs review'];
+      const rows = data.rows.map((r, i) => [...r, assignments[i]?.category ?? '', assignments[i]?.flagged ? 'yes' : '']);
+      const totals = {};
+      for (const t of data.txns) {
+        const cat = assignments[t.row]?.category;
+        if (cat) totals[cat] = Math.round(((totals[cat] ?? 0) + t.amount) * 100) / 100;
+      }
+      return {
+        title: `ChoreCade expenses: ${basename(csvPath)}`,
+        tabs: [
+          { name: 'Transactions', rows: [header, ...rows] },
+          { name: 'Totals', rows: [['Category', 'Total'], ...Object.entries(totals).sort((a, b) => a[1] - b[1])] },
+        ],
+      };
+    },
+
     async scan() {
       data = readTransactions(await readFile(csvPath, 'utf8'));
       assignments = await loadJson(out.state, {});

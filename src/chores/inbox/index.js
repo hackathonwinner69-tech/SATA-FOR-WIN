@@ -63,10 +63,11 @@ export function groupBySender(messages) {
   return groups.sort((a, b) => b.count - a.count);
 }
 
-export function createInboxChore({ provider, dataDir, dryRun = false, oneClickUnsubscribe = false, fetchImpl = fetch }) {
+export function createInboxChore({ provider, dataDir, id = 'inbox', title = 'Inbox Invaders', remote = false, dryRun = false, oneClickUnsubscribe = false, fetchImpl = fetch }) {
   return {
-    id: 'inbox',
-    title: 'Inbox Invaders',
+    id,
+    title,
+    remote,
     chore: 'Triage your inbox',
     game: 'invaders',
     unit: 'emails in the inbox',
