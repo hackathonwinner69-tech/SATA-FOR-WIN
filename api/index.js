@@ -10,7 +10,8 @@ async function build() {
   const sandbox = join('/tmp', 'chorecade-demo');
   const chores = await createDemoChores(sandbox);
   const arcade = new Arcade({ chores, journalFile: join(sandbox, 'journal.jsonl'), mode: 'demo', advisor: null });
-  const { app } = createServer(arcade, { port: 4747, token: process.env.CHORECADE_TOKEN ?? 'demo' });
+  // The hosted demo has no terminal to print a link, and plays nothing but the /tmp sandbox, so it opens directly.
+  const { app } = createServer(arcade, { port: 4747, token: process.env.CHORECADE_TOKEN ?? 'demo', publicDemo: true });
   return app;
 }
 

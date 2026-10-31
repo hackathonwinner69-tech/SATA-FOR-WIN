@@ -33,7 +33,7 @@ const lockedPage = (port) => `<!doctype html>
 </html>
 `;
 
-export function createServer(arcade, { port, token = randomBytes(24).toString('hex'), google = null, dropbox = null }) {
+export function createServer(arcade, { port, token = randomBytes(24).toString('hex'), google = null, dropbox = null, publicDemo = false }) {
   const app = express();
   // Browsers share cookies across ports, so each port gets its own name and two runs never lock each other out.
   const sessionCookie = `chorecade_session_${port}`;
@@ -58,7 +58,8 @@ export function createServer(arcade, { port, token = randomBytes(24).toString('h
       res.cookie(sessionCookie, token, { httpOnly: true, sameSite: 'lax', path: '/' });
       return res.redirect(303, '/');
     }
-    if (!sameToken(readCookie(req, sessionCookie), token)) return res.status(401).type('html').send(lockedPage(port));
+    // A public demo (the hosted site) only ever plays a throwaway sandbox, so it opens without the terminal link.
+    if (!publicDemo && !sameToken(readCookie(req, sessionCookie), token)) return res.status(401).type('html').send(lockedPage(port));
     const html = await readFile(join(PUBLIC, 'chorecade.html'), 'utf8');
     res.type('html').send(html.replace('__CHORECADE_TOKEN__', token));
   });
