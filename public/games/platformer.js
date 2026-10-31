@@ -20,10 +20,14 @@ export function rng(seedText) {
   };
 }
 
-/** Which kind of foe a rule becomes: big rules are bosses, fixable ones crawl, the rest fly. */
+/** Make each lint group a recognizable castle creature, consistently across runs. */
 export function foeKind(group) {
   if (group.count >= 8) return 'boss';
-  return group.fixable ? 'crawler' : 'bat';
+  if (group.fixable) return 'crawler';
+  const rule = group.rule ?? group.id ?? '';
+  const archetypes = ['bat', 'wisp', 'sentinel'];
+  const hash = [...rule].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return archetypes[hash % archetypes.length];
 }
 
 /**
@@ -70,7 +74,8 @@ export function buildLevel(groups, seedText = '') {
       let fx = x0 + 4 + Math.floor(rand() * (SECTION - 8));
       const pit = pits.find((p) => fx >= p.x - 1 && fx <= p.x + p.w);
       if (pit) fx = pit.x + pit.w + 1; // never spawn a foe over a pit
-      foes.push({ group, kind, x: fx * TILE, y: (kind === 'bat' ? 4 : GROUND - (kind === 'boss' ? 2 : 1)) * TILE, section: s });
+      const flying = kind === 'bat' || kind === 'wisp';
+      foes.push({ group, kind, x: fx * TILE, y: (flying ? 4 : GROUND - (kind === 'boss' ? 2 : 1)) * TILE, section: s });
     }
   }
   return { w, h: ROWS, solid, foes, candles, pits, sections, exit: { x: (w - 3) * TILE, y: (GROUND - 3) * TILE } };

@@ -67,9 +67,9 @@ export function keyboard(onPress) {
 }
 
 /** Show a modal card over the game. `buttons` is [{label, onClick}]. */
-export function overlay(root, html, buttons = []) {
+export function overlay(root, html, buttons = [], variant = '') {
   const el = document.createElement('div');
-  el.className = 'overlay';
+  el.className = ['overlay', variant].filter(Boolean).join(' ');
   el.setAttribute('role', 'dialog');
   el.setAttribute('aria-modal', 'true');
   el.innerHTML = `<div class="card">${html}<div class="actions"></div></div>`;
@@ -91,15 +91,19 @@ export function overlay(root, html, buttons = []) {
     actions.append(btn);
   }
   root.append(el);
-  el.querySelector('.btn.big, .btn')?.focus();
+  const firstButton = el.querySelector('.btn.big, .btn');
+  if (variant === 'dungeon-guide') firstButton?.focus({ preventScroll: true });
+  else firstButton?.focus();
   return el;
 }
 
 /** An intro card that resolves when the player presses start. */
-export function intro(root, { title, story, keys, start = 'START' }) {
+export function intro(root, { title, story, keys, start = 'START', guide = [], note = '', variant = '' }) {
   return new Promise((resolve) => {
     const rows = keys.map(([k, v]) => `<span>${k.split(' ').map((x) => `<kbd>${esc(x)}</kbd>`).join(' ')}</span><span>${esc(v)}</span>`).join('');
-    overlay(root, `<h2>${esc(title)}</h2><p>${esc(story)}</p><div class="keys">${rows}</div>`, [{ label: start, onClick: resolve }]);
+    const cards = guide.length ? `<div class="guide-grid" aria-label="Game actions">${guide.map((item) => `<article class="guide-card"><span class="guide-key">${esc(item.key)}</span><h3>${esc(item.label)}</h3><p>${esc(item.description)}</p></article>`).join('')}</div>` : '';
+    const noteHtml = note ? `<p class="guide-note">${esc(note)}</p>` : '';
+    overlay(root, `<h2>${esc(title)}</h2><p>${esc(story)}</p>${cards}${noteHtml}<div class="keys">${rows}</div>`, [{ label: start, onClick: resolve }], variant);
   });
 }
 
