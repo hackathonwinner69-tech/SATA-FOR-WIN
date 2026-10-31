@@ -36,6 +36,13 @@ export class JobQueue extends EventEmitter {
     return job;
   }
 
+  /** Run `fn` after everything already queued for `chore`, without making it a job. */
+  after(chore, fn) {
+    const run = (this.lanes.get(chore) ?? Promise.resolve()).then(fn);
+    this.lanes.set(chore, run.catch(() => {}));
+    return run;
+  }
+
   pending() {
     return [...this.jobs.values()].filter((j) => j.status === 'queued' || j.status === 'running').length;
   }
