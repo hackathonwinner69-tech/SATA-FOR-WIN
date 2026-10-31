@@ -50,6 +50,44 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 let state = null;
+let google = { configured: false, connected: false, email: null };
+
+const G_LOGO = '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.4 30.2 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.8 6C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4 7.1-10 7.1-17.5z"/><path fill="#FBBC05" d="M10.5 28.7a14.5 14.5 0 0 1 0-9.4l-7.8-6a24 24 0 0 0 0 21.4l7.8-6z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.9 2.3-8.4 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.8 6C6.6 42.6 14.6 48 24 48z"/></svg>';
+
+async function refreshGoogle() {
+  try {
+    google = await api('/google');
+  } catch {
+    return;
+  }
+  const slot = $('google-slot');
+  if (google.connected) {
+    slot.innerHTML = `<span class="chip g-chip">${G_LOGO}<span>${esc(google.email ?? 'Google')}</span></span> <button class="btn quiet" type="button" id="g-out">Sign out</button>`;
+    $('g-out').addEventListener('click', async () => {
+      await api('/google/disconnect', { method: 'POST' });
+      announce('Signed out of Google. Gmail and Drive cabinets removed.');
+      refreshGoogle();
+    });
+  } else {
+    slot.innerHTML = `<button class="btn quiet g-btn" type="button" id="g-in">${G_LOGO}<span>Sign in with Google</span></button>`;
+    $('g-in').addEventListener('click', async () => {
+      if (!google.configured) {
+        showNotice('Google sign-in needs a Google Cloud OAuth client. Copy .env.example to .env, add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, and restart. The README walks through it in two minutes.');
+        return;
+      }
+      const { url } = await api('/google/connect', { method: 'POST' });
+      location.assign(url);
+    });
+  }
+  if (!current && state) renderMachines();
+}
+
+function showNotice(text) {
+  const el = $('notice');
+  el.textContent = text;
+  el.classList.remove('hidden');
+  el.focus();
+}
 let current = null; // { id, cleanup, impactListeners, opener }
 const ledger = new Map();
 const activeJobs = new Set();
@@ -82,10 +120,12 @@ function renderMachines() {
       const handled = b ? Math.max(0, b.baseline - b.remaining) : 0;
       const pct = b?.baseline ? Math.round((handled / b.baseline) * 100) : 0;
       const impact = describeImpact(c.impact);
+      const real = c.remote ? '<span class="tag warn">your real account</span>' : '';
+      const exportBtn = c.game === 'receipts' && google.connected ? `<button class="btn quiet" type="button" data-sheets="${c.id}">${G_LOGO} Export to Sheets</button>` : '';
       return `<li class="machine" style="--accent:${meta.accent}" aria-labelledby="m-${c.id}">
         <div class="art">${spriteSvg(c.game, { size: 52 })}</div>
         <div>
-          <h2 id="m-${c.id}">${esc(c.title)}</h2>
+          <h2 id="m-${c.id}">${esc(c.title)}${real}</h2>
           <p class="what">${esc(meta.what)}</p>
           <div class="count">${b ? `<b>${fmt.n(b.remaining)}</b><span>${esc(c.unit)} left</span>` : c.remote ? '<span>Not scanned yet</span>' : '<span>Counting…</span>'}</div>
           <div class="meter" role="progressbar" aria-label="${esc(c.chore)} progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div>
@@ -95,13 +135,31 @@ function renderMachines() {
         <div class="controls">
           <button class="btn big" type="button" data-play="${c.id}" aria-label="Play ${esc(c.title)}">Play</button>
           <button class="btn quiet" type="button" data-calm="${c.id}" aria-label="Calm mode for ${esc(c.title)}: no timer, works with a keyboard and screen reader">Calm mode</button>
+          ${exportBtn}
         </div>
       </li>`;
     })
     .join('');
   for (const el of document.querySelectorAll('[data-play]')) el.addEventListener('click', () => launch(el.dataset.play, 'game', el));
   for (const el of document.querySelectorAll('[data-calm]')) el.addEventListener('click', () => launch(el.dataset.calm, 'calm', el));
+  for (const el of document.querySelectorAll('[data-sheets]')) el.addEventListener('click', () => exportSheets(el));
   renderTally();
+}
+
+async function exportSheets(button) {
+  button.disabled = true;
+  announce('Exporting to Google Sheets…');
+  try {
+    const { url } = await api(`/chores/${button.dataset.sheets}/export/sheets`, { method: 'POST' });
+    if (!/^https:\/\/docs\.google\.com\//.test(url)) throw new Error('unexpected link from Google');
+    showNotice('');
+    $('notice').innerHTML = `Exported. <a href="${esc(url)}" target="_blank" rel="noopener noreferrer">Open your expenses in Google Sheets</a>`;
+    announce('Exported to Google Sheets. A link is at the top of the page.');
+  } catch (err) {
+    showNotice(`Export failed: ${err.message}`);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 /** Count every local chore so the board shows the real backlog straight away. */
@@ -225,7 +283,10 @@ function onEvent(event) {
     state = event.state;
     for (const c of state.chores) c.backlog ??= backlogs.get(c.id) ?? null;
     if (!current) renderMachines();
-    if (event.type === 'hello') countAll();
+    if (event.type === 'hello') {
+      countAll();
+      refreshGoogle();
+    }
   }
   if (event.type === 'job') {
     if (event.job.status === 'queued' || event.job.status === 'running') activeJobs.add(event.job.id);
@@ -272,6 +333,12 @@ async function boot() {
   for (const entry of entries.reverse()) {
     ledger.set(entry.id, entry);
     renderLedgerEntry(entry);
+  }
+  const params = new URLSearchParams(location.search);
+  if (params.has('google')) {
+    const outcome = params.get('google');
+    history.replaceState(null, '', '/');
+    showNotice(outcome === 'connected' ? 'Signed in with Google. Your Gmail inbox and Drive are now cabinets below. They are your real accounts: every move is journaled and undoable.' : 'Google sign-in was cancelled.');
   }
   listen(onEvent);
   $('exit').addEventListener('click', exit);
