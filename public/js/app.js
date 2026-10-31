@@ -54,6 +54,203 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 let state = null;
 let google = { configured: false, connected: false, email: null };
 
+// Feature Tour
+let tourStep = 0;
+let currentHighlights = [];
+let isTourOpen = false;
+let isAnimating = false;
+
+function clearHighlights() {
+  currentHighlights.forEach(el => {
+    if (el && el.classList) {
+      el.classList.remove('tour-highlighted');
+    }
+  });
+  currentHighlights = [];
+}
+
+function showTourStep(step) {
+  if (isAnimating) return;
+  isAnimating = true;
+
+  const tourSteps = document.querySelectorAll('.tour-step');
+  if (!tourSteps.length) {
+    isAnimating = false;
+    return;
+  }
+
+  tourSteps.forEach((s, i) => {
+    s.classList.toggle('hidden', i !== step);
+  });
+
+  const stepData = tourSteps[step];
+  const targetSelector = stepData.querySelector('.tour-highlight')?.dataset.target;
+
+  // Clear previous highlights
+  clearHighlights();
+
+  // Add new highlight if target exists
+  if (targetSelector) {
+    setTimeout(() => {
+      try {
+        const targets = document.querySelectorAll(targetSelector);
+        if (targets.length > 0) {
+          targets.forEach(t => {
+            if (t) {
+              t.classList.add('tour-highlighted');
+              currentHighlights.push(t);
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('Tour highlight error:', e);
+      }
+      isAnimating = false;
+    }, 150);
+  } else {
+    isAnimating = false;
+  }
+
+  const tourStepNum = $('tour-step-num');
+  const tourTotal = $('tour-total');
+  const tourPrev = $('tour-prev');
+  const tourNext = $('tour-next');
+  const tourTitle = $('tour-title');
+
+  if (tourStepNum) tourStepNum.textContent = step + 1;
+  if (tourTotal) tourTotal.textContent = tourSteps.length;
+  if (tourPrev) tourPrev.disabled = step === 0;
+  if (tourNext) tourNext.textContent = step === tourSteps.length - 1 ? 'Finish' : 'Next →';
+
+  // Update title based on step
+  const titles = [
+    'Welcome to ChoreCade!',
+    'The Game Cabinets',
+    'Progress Tracking',
+    'The Ledger',
+    'Google Integration',
+    'The Four Games',
+    'You\'re Ready!'
+  ];
+  if (tourTitle) tourTitle.textContent = titles[step];
+}
+
+function startTour() {
+  if (isTourOpen) return;
+  isTourOpen = true;
+  tourStep = 0;
+  isAnimating = false;
+
+  const tourOverlay = $('tour-overlay');
+  if (tourOverlay) {
+    tourOverlay.classList.remove('hidden');
+    document.body.classList.add('tour-open');
+
+    // Wait for overlay to be visible before showing step
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        showTourStep(0);
+        const tourClose = $('tour-close');
+        if (tourClose) tourClose.focus();
+      }, 150);
+    });
+  }
+}
+
+function closeTour() {
+  if (!isTourOpen) return;
+  isTourOpen = false;
+  isAnimating = false;
+  clearHighlights();
+
+  const tourOverlay = $('tour-overlay');
+  if (tourOverlay) {
+    tourOverlay.classList.add('hidden');
+    document.body.classList.remove('tour-open');
+  }
+
+  const tourBtn = $('tour-btn');
+  if (tourBtn) {
+    setTimeout(() => tourBtn.focus(), 150);
+  }
+}
+
+function nextTourStep() {
+  if (isAnimating) return;
+  const tourSteps = document.querySelectorAll('.tour-step');
+  if (tourStep < tourSteps.length - 1) {
+    tourStep++;
+    showTourStep(tourStep);
+  } else {
+    closeTour();
+  }
+}
+
+function prevTourStep() {
+  if (isAnimating) return;
+  if (tourStep > 0) {
+    tourStep--;
+    showTourStep(tourStep);
+  }
+}
+
+// Tour event listeners (will be attached after DOM is ready)
+function setupTourListeners() {
+  const tourBtn = $('tour-btn');
+  const tourClose = $('tour-close');
+  const tourNext = $('tour-next');
+  const tourPrev = $('tour-prev');
+
+  if (tourBtn) tourBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    startTour();
+  });
+  if (tourClose) tourClose.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    closeTour();
+  });
+  if (tourNext) tourNext.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    nextTourStep();
+  });
+  if (tourPrev) tourPrev.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    prevTourStep();
+  });
+
+  // Close tour when clicking outside the card
+  const tourOverlay = $('tour-overlay');
+  const tourCard = $('tour-card');
+  if (tourOverlay && tourCard) {
+    tourOverlay.addEventListener('click', (e) => {
+      if (e.target === tourOverlay || e.target.classList.contains('tour-backdrop')) {
+        closeTour();
+      }
+    });
+  }
+}
+
+// Keyboard navigation for tour
+document.addEventListener('keydown', (e) => {
+  const tourOverlay = $('tour-overlay');
+  if (tourOverlay && !tourOverlay.classList.contains('hidden')) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeTour();
+    } else if (e.key === 'ArrowRight' || e.key === 'Enter') {
+      e.preventDefault();
+      nextTourStep();
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      prevTourStep();
+    }
+  }
+});
+
 const G_LOGO = '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.4 30.2 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.8 6C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4 7.1-10 7.1-17.5z"/><path fill="#FBBC05" d="M10.5 28.7a14.5 14.5 0 0 1 0-9.4l-7.8-6a24 24 0 0 0 0 21.4l7.8-6z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.9 2.3-8.4 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.8 6C6.6 42.6 14.6 48 24 48z"/></svg>';
 
 async function refreshGoogle() {
@@ -519,6 +716,18 @@ async function boot() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && current) exit();
   });
+
+  // Setup tour listeners
+  setupTourListeners();
+
+  // Show tour automatically (comment out the localStorage check to always show)
+  // const hasSeenTour = localStorage.getItem('chorecade-tour-seen');
+  // if (!hasSeenTour) {
+    setTimeout(() => {
+      startTour();
+      // localStorage.setItem('chorecade-tour-seen', 'true');
+    }, 500);
+  // }
 }
 
 boot().catch((err) => {

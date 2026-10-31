@@ -25,6 +25,7 @@
         <span id="google-slot"></span>
         <span id="dropbox-slot"></span>
         <span id="worker" class="worker" role="status" aria-live="polite">Worker idle</span>
+        <button class="btn quiet" type="button" id="tour-btn" aria-label="Start feature tour">🎯 Tour</button>
       </nav>
     </header>
 
@@ -70,5 +71,78 @@
     </section>
 
     <div id="announcer" class="sr-only" role="status" aria-live="polite"></div>
+
+    <!-- Feature Tour Overlay -->
+    <div id="tour-overlay" class="tour-overlay hidden" role="dialog" aria-labelledby="tour-title" aria-modal="true">
+      <div class="tour-backdrop"></div>
+      <div class="tour-card" id="tour-card">
+        <div class="tour-header">
+          <h2 id="tour-title">Welcome to ChoreCade!</h2>
+          <button class="btn quiet" type="button" id="tour-close" aria-label="Close tour">✕</button>
+        </div>
+        <div class="tour-content" id="tour-content">
+          <div class="tour-step" data-step="0">
+            <h3>🎮 Games That Do Real Work</h3>
+            <p>ChoreCade turns boring digital chores into fun arcade games. Every move you make in a game performs a real action on your files, emails, or code.</p>
+            <div class="tour-highlight" data-target=".lede">
+              <strong>Highlighted:</strong> The main description area
+            </div>
+          </div>
+          <div class="tour-step hidden" data-step="1">
+            <h3>📋 The Game Cabinets</h3>
+            <p>Each card represents a different chore cabinet. Click "Play" to start the game, or "Calm mode" for a keyboard-friendly alternative.</p>
+            <div class="tour-highlight" data-target=".machines">
+              <strong>Highlighted:</strong> The list of available games
+            </div>
+          </div>
+          <div class="tour-step hidden" data-step="2">
+            <h3>📊 Progress Tracking</h3>
+            <p>Each cabinet shows how many items remain and your progress. The "done" section summarizes what you've accomplished.</p>
+            <div class="tour-highlight" data-target=".machine">
+              <strong>Highlighted:</strong> Progress meters and completion status
+            </div>
+          </div>
+          <div class="tour-step hidden" data-step="3">
+            <h3>📝 The Ledger</h3>
+            <p>Every real change is recorded here. You can undo any action by clicking the Undo button. Nothing is ever permanently deleted!</p>
+            <div class="tour-highlight" data-target=".ledger">
+              <strong>Highlighted:</strong> The ledger showing all changes
+            </div>
+          </div>
+          <div class="tour-step hidden" data-step="4">
+            <h3>🔗 Google Integration</h3>
+            <p>Sign in with Google to work with your real Gmail inbox and Google Drive. Your data stays safe and every action is undoable.</p>
+            <div class="tour-highlight" data-target="#google-slot">
+              <strong>Highlighted:</strong> Google sign-in button area
+            </div>
+          </div>
+          <div class="tour-step hidden" data-step="5">
+            <h3>🎯 The Four Games</h3>
+            <p><strong>Inbox Invaders:</strong> Space shooter that archives emails by sender<br>
+            <strong>Folder Frenzy:</strong> Courier game that sorts files into folders<br>
+            <strong>Receipt Rush:</strong> RPG that categorizes expenses<br>
+            <strong>Lint Dungeon:</strong> Castle crawl that fixes code lint errors</p>
+            <div class="tour-highlight" data-target=".machines">
+              <strong>Highlighted:</strong> All game cabinets
+            </div>
+          </div>
+          <div class="tour-step hidden" data-step="6">
+            <h3>✨ You're Ready!</h3>
+            <p>Start with the demo mode to try everything safely. When you're ready, point ChoreCade at your real files and watch your backlog disappear!</p>
+            <p><strong>Tip:</strong> Every cabinet has a Calm mode if you prefer a traditional interface without game graphics.</p>
+            <p><strong>Tip:</strong> Click the "🎯 Tour" button anytime to replay this guide.</p>
+          </div>
+        </div>
+        <div class="tour-footer">
+          <div class="tour-progress">
+            <span id="tour-step-num">1</span> / <span id="tour-total">7</span>
+          </div>
+          <div class="tour-nav">
+            <button class="btn quiet" type="button" id="tour-prev" disabled>← Previous</button>
+            <button class="btn" type="button" id="tour-next">Next →</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </body>
 </html>
