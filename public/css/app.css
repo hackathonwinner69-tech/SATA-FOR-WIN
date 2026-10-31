@@ -1064,4 +1064,15 @@ body.tour-open .tour-highlighted {
     animation: none !important;
     transition: none !important;
   }
+/* sound toggle inside a game screen */
+.sound-toggle {
+  position: absolute;
+  top: 58px;
+  right: 12px;
+  z-index: 3;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+.sound-toggle[aria-pressed='false'] {
+  opacity: 0.75;
 }

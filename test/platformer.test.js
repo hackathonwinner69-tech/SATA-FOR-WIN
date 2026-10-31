@@ -9,7 +9,8 @@ test('the same rules always build the same floor', () => {
   const b = buildLevel(groups, 'floor0');
   assert.deepEqual([...a.solid], [...b.solid]);
   assert.deepEqual(a.foes.map((f) => f.x), b.foes.map((f) => f.x));
-  assert.notDeepEqual([...buildLevel(groups, 'floor1').solid], [...a.solid]);
+  // each floor is a different wing of the castle
+  assert.notDeepEqual([...buildLevel(groups, 'floor1', 1).solid], [...a.solid]);
   assert.equal(rng('x')(), rng('x')());
 });
 
@@ -30,7 +31,7 @@ test('every pit can be cleared with one running jump', () => {
   const airTime = (2 * PHYS.jump) / PHYS.gravity;
   const reach = PHYS.run * airTime;
   for (let seed = 0; seed < 40; seed++) {
-    const level = buildLevel(groups, `seed${seed}`);
+    const level = buildLevel(groups, `seed${seed}`, seed); // covers every wing layout
     for (const pit of level.pits) assert.ok(pit.w * TILE + 8 < reach, `pit of ${pit.w} tiles is jumpable`);
     // the start and exit rooms are solid floor
     for (let x = 1; x < SECTION; x++) assert.ok(isSolid(level, x, GROUND));
