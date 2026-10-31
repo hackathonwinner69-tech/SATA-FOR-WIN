@@ -15,6 +15,7 @@ import { createExpensesChore } from './chores/expenses/index.js';
 import { createLintChore } from './chores/lint/index.js';
 import { createAdvisor } from './ai/advisor.js';
 import { GoogleAuth } from './google/auth.js';
+import { DropboxAuth } from './dropbox/auth.js';
 
 const HELP = `ChoreCade: play a game, finish a real chore.
 
@@ -37,6 +38,10 @@ Options
                         the Anthropic API; needs ANTHROPIC_API_KEY or \`ant auth login\`)
   --gmail-max <n>       newest inbox messages to scan once Google is connected (2000)
   --drive-folder <id>   Drive folder to sort once Google is connected (My Drive)
+  --dropbox-folder <path>
+                        Dropbox folder to sort once Dropbox is connected, e.g.
+                        /Downloads (default: the top of your Dropbox, or of the
+                        app folder for an App folder app)
   --one-click-unsubscribe
                         send RFC 8058 one-click unsubscribe requests (live mail only)
   --port <n>            default 4747
@@ -60,6 +65,7 @@ const { values } = parseArgs({
     ai: { type: 'boolean', default: false },
     'gmail-max': { type: 'string', default: '2000' },
     'drive-folder': { type: 'string', default: 'root' },
+    'dropbox-folder': { type: 'string', default: '' },
     'one-click-unsubscribe': { type: 'boolean', default: false },
     port: { type: 'string', default: process.env.PORT ?? '4747' },
     sandbox: { type: 'string', default: 'sandbox' },
@@ -121,10 +127,24 @@ const google = new GoogleAuth({
   tokenFile: join(dataDir, 'google-token.json'),
 });
 await google.load();
+const dropbox = new DropboxAuth({ appKey: process.env.DROPBOX_APP_KEY, tokenFile: join(dataDir, 'dropbox-token.json') });
+await dropbox.load();
 const { app, token } = createServer(arcade, {
   port,
   google: { auth: google, options: { dataDir, dryRun, gmailMax: Number(values['gmail-max']), driveFolder: values['drive-folder'], oneClickUnsubscribe: values['one-click-unsubscribe'] } },
+  dropbox: { auth: dropbox, options: { dryRun, folder: values['dropbox-folder'] } },
 });
+
+// Ctrl+C lets queued moves land and logs out of IMAP. A second Ctrl+C, or two seconds, ends it regardless.
+let stopping = false;
+function shutdown() {
+  if (stopping) process.exit(130);
+  stopping = true;
+  setTimeout(() => process.exit(0), 2000).unref();
+  arcade.close().finally(() => process.exit(0));
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 app.listen(port, '127.0.0.1', () => {
   console.log(`\nChoreCade (${mode}) at http://localhost:${port}/?token=${token}`);
@@ -132,6 +152,8 @@ app.listen(port, '127.0.0.1', () => {
   for (const c of chores) console.log(`  ${c.title.padEnd(16)} ${c.target}`);
   const googleState = google.connected ? `signed in${google.token.email ? ` as ${google.token.email}` : ''}` : google.configured ? 'ready, sign in from the arcade' : 'not set up (see README: Google services)';
   console.log(`\nGoogle: ${googleState}`);
+  const dropboxState = dropbox.connected ? `signed in${dropbox.token.email ? ` as ${dropbox.token.email}` : ''}` : dropbox.configured ? 'ready, connect from the arcade' : 'not set up (see README: Dropbox)';
+  console.log(`Dropbox: ${dropboxState}`);
   if (advisor) console.log('\nClaude advisor on: file names, merchant names and merchant totals are sent to the Anthropic API for suggestions.');
   if (mode === 'live') console.log('\nLive mode: moves change real things. Everything is journaled and undoable from the HUD.');
 });

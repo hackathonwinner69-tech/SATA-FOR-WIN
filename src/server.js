@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostGuard, sameToken, tokenGuard } from './core/safety.js';
 import { mountGoogle } from './google/index.js';
+import { mountDropbox } from './dropbox/index.js';
 
 const PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
 const FONTS = fileURLToPath(new URL('../node_modules/@fontsource/', import.meta.url));
@@ -31,7 +32,7 @@ const lockedPage = (port) => `<!doctype html>
 </html>
 `;
 
-export function createServer(arcade, { port, token = randomBytes(24).toString('hex'), google = null }) {
+export function createServer(arcade, { port, token = randomBytes(24).toString('hex'), google = null, dropbox = null }) {
   const app = express();
   // Browsers share cookies across ports, so each port gets its own name and two runs never lock each other out.
   const sessionCookie = `chorecade_session_${port}`;
@@ -118,6 +119,7 @@ export function createServer(arcade, { port, token = randomBytes(24).toString('h
   });
 
   if (google) mountGoogle({ app, api, arcade, port, ...google });
+  if (dropbox) mountDropbox({ app, api, arcade, port, ...dropbox });
   app.use('/api', api);
   return { app, token };
 }
