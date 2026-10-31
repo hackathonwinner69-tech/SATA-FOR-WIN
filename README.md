@@ -3,9 +3,9 @@
 **Play a game. Finish a real chore.**
 
 ChoreCade is an arcade where every move you make does a real chore in the background. Shoot down an invader and 400
-emails from one sender are archived. Run a crate to the Images door and 46 screenshots move into `Images/`. Take a
-checkout gate and a year of coffee purchases is filed under Food. Kill a boss bug and ESLint fixes `no-var` across your
-whole project. Sign in with Google and the same games work on your real Gmail and Drive.
+emails from one sender are archived. Run a crate to the Images door and 46 screenshots move into `Images/`. Choose
+FILE when a coffee shop monster attacks and a year of coffee purchases is filed under Food. Beam a crawler in the
+castle and ESLint fixes `no-var` across your whole project. Sign in with Google and the same games work on your real Gmail and Drive.
 
 We all put off the same digital chores: 5,000 unread emails, a Downloads folder nobody can look at, expenses nobody has
 reviewed, a wall of lint warnings. They aren't hard, just boring and big. ChoreCade turns them into something you can
@@ -27,8 +27,11 @@ year of bank transactions and a small JavaScript app full of lint, and plays aga
 | --- | --- | --- |
 | **Inbox Invaders** | Triage 5,000 emails | A shooter. Each ship is one **sender**; its hull grows with how much mail it sent. Archive laser, trash torpedo, unsubscribe EMP or keep beam: a hit moves every email from that sender. Smart bombs apply ChoreCade's pick to every low-risk ship on screen. People are gold ships that take two hits to trash. |
 | **Folder Frenzy** | Sort a messy folder | An arena courier game. You drive a robot, pick up crates of look-alike files (`Screenshot … (*.png)` ×46) and run them to bin doors on the walls; a delivery moves the files. Dust bunnies chase you and knock crates loose, and a dropped crate changes nothing. Exact duplicates are red crates found by hash. |
-| **Receipt Rush** | Review expenses | A lane runner down the checkout aisle. Each **merchant** is a wave of three gates (ChoreCade's guess, another category, Flag); running through one files every charge from that merchant. Carts cost hearts, jumping sends a merchant to the back of the line, and a wave you never pick a lane for files nothing. The categorised CSV, `expense-report.md` and `merchant-rules.json` are rewritten as you play. |
-| **Lint Dungeon** | Fix lint errors | A top-down boss shooter. Each **lint rule** is a boss bug sized by how often it's broken. Autofix only hurts bosses ESLint can fix and runs ESLint's fixer for that one rule; Silence adds marked disable comments; Quest log writes it to `LINT_QUESTLOG.md`. A boss falls to one spell, so the kill is the action. Each floor is a fresh lint pass: problems a fix exposes come back below. |
+| **Receipt Rush** | Review expenses | Turn-based encounters in the Undertale tradition. Each **merchant** is a monster grown from its name. On your turn choose FILE (pick a category; the suggestion is starred), CHECK, FLAG or SPARE, and that choice is the real action. Then the merchant attacks and you dodge inside the bullet box: subscriptions spiral, big or duplicate charges fall like boulders, regulars rain coins. The categorised CSV, `expense-report.md` and `merchant-rules.json` are rewritten as you play. |
+| **Lint Dungeon** | Fix lint errors | A side-scrolling castle crawl in the Metroidvania tradition. Each **lint rule** is a foe: big rules are bosses, fixable ones crawl, the rest fly. Three weapons, three real actions: the Fix Beam runs ESLint's autofix for that rule (and only hurts foes ESLint can fix), the Hush Whip adds marked disable comments, the Quest Scroll writes it to `LINT_QUESTLOG.md`. Whip candles for hearts; the exit door opens when the floor is clear, and the next floor is a fresh lint pass. |
+
+All characters, sprites and levels are original. The games borrow genre mechanics (bullet boxes, whips and beams, locked
+doors and minimaps), not anyone's art, music or characters.
 
 Every cabinet also has **Calm mode**: the same chore as a plain table with a native select and an Apply button per
 group, with no timer and no canvas. See [Accessibility](#accessibility).
@@ -81,7 +84,8 @@ ChoreCade is allowed to move real mail and real files, so it's careful about it:
   The ledger beside the cabinets lists each change with an Undo button.
 - **Nothing is ever deleted.** "Trash" means Gmail's or Drive's trash, the mailbox's Trash folder, or a
   `.chorecade-trash/` folder you can open.
-- **Only deliberate moves act.** A crate you never pick up, or a checkout wave you never pick a lane for, changes nothing.
+- **Only deliberate moves act.** A crate you never pick up changes nothing; a merchant is only filed when you choose FILE
+  or FLAG on your turn; a lint foe only changes code when you defeat it.
   People are gold ships with a shield.
 - **Undo is all-or-nothing and won't clobber.** File moves are reversed only if every original spot is still free. A
   lint undo is refused if the file has been edited since.
@@ -180,9 +184,9 @@ src/
 public/
   js/                    arcade floor, API client, pixel sprites
   games/                 invaders, frenzy, receipts, dungeon, calm mode, shared kit
-  games/arena.js, lanes.js   DOM-free game logic, unit-tested in Node
+  games/arena.js, platformer.js, encounter.js   DOM-free game logic, unit-tested in Node
 scripts/seed-demo.js     deterministic demo sandbox
-test/                    39 tests: chores, undo, server guards, Google (fake API), game logic, advisor
+test/                    42 tests: chores, undo, server guards, Google (fake API), game logic, advisor
 ```
 
 No build step and no front-end framework: plain ES modules and `<canvas>`.
@@ -193,7 +197,7 @@ No build step and no front-end framework: plain ES modules and `<canvas>`.
 | --- | --- |
 | Problem statement alignment | Every game action is a real chore action (`chores/*/index.js` `apply`), run in the background by `core/queue.js` while you keep playing. Inbox, folder, expenses and lint, the four chores in the brief, locally and on Gmail and Drive. |
 | Security | `core/safety.js` (host, origin and token guards, path containment, symlink refusal), CSP in `server.js`, OAuth with PKCE and state in `google/auth.js`, RAW Sheets writes, no secrets on the command line, append-only journal with conservative undo. |
-| Testing | `npm test`: 39 `node:test` tests covering every chore's apply and undo, the server guards, Google flows against a fake API, the game logic and the advisor. CI on Linux and Windows. |
+| Testing | `npm test`: 42 `node:test` tests covering every chore's apply and undo, the server guards, Google flows against a fake API, the game logic and the advisor. CI on Linux and Windows. |
 | Efficiency | One move handles a whole group; mailbox heads are read 16 KB at a time in batches of 200; Gmail fetches headers only with a concurrency pool; Drive duplicates come from server checksums; no front-end build or framework. |
 | Accessibility | Calm mode for every chore, live announcements, AA contrast, reduced motion, keyboard play throughout; see [Accessibility](#accessibility). |
 | Code quality | One small interface per chore, sources behind providers and stores, pure game logic split from rendering, ESLint clean, no build step. |
