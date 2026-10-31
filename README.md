@@ -15,17 +15,29 @@ finish in a five-minute game session.
 git clone https://github.com/hackathonwinner69-tech/SATA-FOR-WIN.git
 cd SATA-FOR-WIN
 npm install
-npm run demo        # builds a sandbox and opens the arcade on http://localhost:4747
+npm run demo        # builds a sandbox and starts the arcade
 ```
+
+Then open the link it prints, `http://localhost:4747/?token=…`. The link carries this run's key: the bare address shows a
+locked page, so other programs on your machine can't drive the arcade. On the home screen, **Start here** opens Inbox
+Invaders.
 
 The demo never touches your real files. It builds a sandbox with a 5,000-email inbox, a cluttered Downloads folder, a
 year of bank transactions and a small JavaScript app full of lint, and plays against those.
+
+![The arcade floor after a short game: the backlog counters, four cabinets, and the ledger with an Undo button on every real change](docs/screenshots/arcade.png)
+
+| Inbox Invaders | Folder Frenzy |
+| --- | --- |
+| ![Inbox Invaders: one ship per sender, labelled with how much mail it sent, and the Archive, Trash, Unsub and Keep weapons](docs/screenshots/inbox-invaders.png) | ![Folder Frenzy: the courier robot, crates of look-alike files and bin doors on the arena walls](docs/screenshots/folder-frenzy.png) |
+| **Receipt Rush** | **Lint Dungeon** |
+| ![Receipt Rush: the payroll merchant as a monster, with the FILE, CHECK, FLAG and SPARE choices](docs/screenshots/receipt-rush.png) | ![Lint Dungeon: a no-var crawler in the castle, with the Fix Beam, Hush Whip and Quest Scroll](docs/screenshots/lint-dungeon.png) |
 
 ## The cabinets
 
 | Cabinet | The chore | The game, and how a move becomes real work |
 | --- | --- | --- |
-| **Inbox Invaders** | Triage 5,000 emails | A shooter. Each ship is one **sender**; its hull grows with how much mail it sent. Archive laser, trash torpedo, unsubscribe EMP or keep beam: a hit moves every email from that sender. Smart bombs apply ChoreCade's pick to every low-risk ship on screen. People are gold ships that take two hits to trash. |
+| **Inbox Invaders** | Triage 5,000 emails | A shooter. Each ship is one **sender**; its hull grows with how much mail it sent. Archive laser, trash torpedo, unsubscribe EMP or keep beam: a hit moves every email from that sender. Smart bombs apply ChoreCade's pick to every low-risk ship in view. People are shielded gold ships: the first trash or unsubscribe hit drops the shield, and only a second, separate press of fire confirms it. |
 | **Folder Frenzy** | Sort a messy folder | An arena courier game. You drive a robot, pick up crates of look-alike files (`Screenshot … (*.png)` ×46) and run them to bin doors on the walls; a delivery moves the files. Dust bunnies chase you and knock crates loose, and a dropped crate changes nothing. Exact duplicates are red crates found by hash. |
 | **Receipt Rush** | Review expenses | Turn-based encounters in the Undertale tradition. Each **merchant** is a monster grown from its name. On your turn choose FILE (pick a category; the suggestion is starred), CHECK, FLAG or SPARE, and that choice is the real action. Then the merchant attacks and you dodge inside the bullet box: subscriptions spiral, big or duplicate charges fall like boulders, regulars rain coins. The categorised CSV, `expense-report.md` and `merchant-rules.json` are rewritten as you play. |
 | **Lint Dungeon** | Fix lint errors | A side-scrolling castle crawl in the Metroidvania tradition. Each **lint rule** is a foe: big rules are bosses, fixable ones crawl, the rest fly. Three weapons, three real actions: the Fix Beam runs ESLint's autofix for that rule (and only hurts foes ESLint can fix), the Hush Whip adds marked disable comments, the Quest Scroll writes it to `LINT_QUESTLOG.md`. Whip candles for hearts; the exit door opens when the floor is clear, and the next floor is a fresh lint pass. |
@@ -36,13 +48,15 @@ doors and minimaps), not anyone's art, music or characters.
 Every cabinet also has **Calm mode**: the same chore as a plain table with a native select and an Apply button per
 group, with no timer and no canvas. See [Accessibility](#accessibility).
 
+![Calm mode for Folder Frenzy: a table of file groups, each with a suggested bin, an Apply button, and one button that applies every low-risk suggestion](docs/screenshots/calm-mode.png)
+
 ## Why grouping is the trick
 
 Games are fast; chores are big. To close that gap, each move works on a **group**, not one item:
 
 - 5,000 emails come from about 150 senders → **150 shots, not 5,000 decisions.**
 - 168 loose files become 16 crates of look-alikes and duplicates.
-- 300 transactions come from 27 merchants.
+- 301 transactions come from 27 merchants.
 - 47 lint problems come from 12 rules.
 
 Every group arrives with a suggestion (the ring around a ship, the lit door, the starred gate), so most moves are a quick
@@ -71,10 +85,14 @@ Sign in with Google from the masthead and two new cabinets appear, tagged **your
 5. `npm run demo` (or `npm start`) and click **Sign in with Google**.
 
 How sign-in is kept safe: it uses the OAuth 2.0 desktop flow Google recommends for installed apps: PKCE, a one-time
-`state` that expires after ten minutes, and a loopback redirect to `127.0.0.1`. Only the refresh token is stored, in
-`.chorecade/google-token.json` with owner-only permissions. **Sign out** revokes the grant at Google. Scopes are
-`gmail.modify` (move mail; it cannot permanently delete) and `drive` (needed to sort files ChoreCade didn't create).
-Sheets values are written `RAW`, so a merchant named `=IMPORTXML(…)` stays text and never becomes a formula.
+`state` that expires after ten minutes, and a loopback redirect to `127.0.0.1`. Only the refresh token (with the
+granted scopes and your address) is stored, in `.chorecade/google-token.json`, written atomically with owner-only
+permissions. **Sign out** revokes the grant at Google and tells you if Google didn't confirm it. Scopes are
+`gmail.modify` (move mail; it cannot permanently delete) and `drive` (needed to sort files ChoreCade didn't create). If
+you untick one on Google's consent screen, its cabinet is left out and the arcade says which. If Google later revokes the
+sign-in, the Gmail and Drive cabinets go with it until you sign in again. Every Google call has a 30-second timeout, and
+calls that create something (a Drive folder, a spreadsheet) are never retried after a server error, so they can't run
+twice. Sheets values are written `RAW`, so a merchant named `=IMPORTXML(…)` stays text and never becomes a formula.
 
 ## Safety model
 
@@ -85,16 +103,30 @@ ChoreCade is allowed to move real mail and real files, so it's careful about it:
 - **Nothing is ever deleted.** "Trash" means Gmail's or Drive's trash, the mailbox's Trash folder, or a
   `.chorecade-trash/` folder you can open.
 - **Only deliberate moves act.** A crate you never pick up changes nothing; a merchant is only filed when you choose FILE
-  or FLAG on your turn; a lint foe only changes code when you defeat it.
-  People are gold ships with a shield.
+  or FLAG on your turn; a lint foe only changes code when you defeat it. Trashing or unsubscribing a person in Inbox
+  Invaders takes two separate presses of fire, so holding the button down can't do it.
+- **Moves never overwrite.** If a name is already taken, the file lands as `name (2).ext` instead.
 - **Undo is all-or-nothing and won't clobber.** File moves are reversed only if every original spot is still free. A
-  lint undo is refused if the file has been edited since.
-- **Unsubscribe is conservative.** RFC 8058 one-click POSTs only go out with `--one-click-unsubscribe` on live mail.
-  Otherwise links land in `unsubscribe-queue.md` to click yourself. Links are never fetched with GET.
+  lint undo is refused if the file has been edited since. An undo only runs against the folder or mailbox the change was
+  made in, and only once.
+- **A move that fails halfway can still be undone.** The part that already happened is journaled with its own Undo.
+- **Unsubscribe is conservative.** RFC 8058 one-click POSTs only go out with `--one-click-unsubscribe` on live mail,
+  and only to public HTTPS hosts: a link that points at this machine or your local network is refused. Otherwise links
+  land in `unsubscribe-queue.md` to click yourself, with sender names escaped so an email can't plant links in it.
+  Links are never fetched with GET.
+- **Spreadsheet output stays data.** Cells in the categorised CSV that start with `=`, `+`, `-` or `@` (and aren't
+  plain numbers) get a leading `'`, so a merchant name can't run as a formula in Excel or Sheets. The expense
+  outputs are written atomically, so a crash never leaves half a file.
+- **A display name can't impersonate an address.** `"support@paypal.com" <x@evil.test>` shows up as `x@evil.test`.
 - **`--dry-run`** journals what would happen without changing anything.
-- **The local server is locked down.** It binds to `127.0.0.1`. It refuses requests addressed to any other host name
-  (DNS rebinding) and cross-origin requests. It sends a strict Content-Security-Policy, and every API call needs a
-  per-run session token. Paths are contained to the folder you named, and symlinks are refused.
+- **The local server is locked down.** It binds to `127.0.0.1` and only opens from the link printed in the terminal,
+  which sets an HttpOnly session cookie. Every API call also needs the per-run session token, compared in constant time.
+  It refuses requests addressed to any other host name (DNS rebinding) and cross-origin requests, and sends a strict
+  Content-Security-Policy (no inline scripts, no framing).
+- **Paths stay inside the folder you named.** Symlinks are refused, including a bin, trash or output file that is
+  really a link to somewhere else. The journal is owner-only (`0600`).
+- **`--lint` runs the project's own ESLint config.** Like running `npx eslint` there, loading `eslint.config.js` runs
+  that project's code and plugins. Only point it at projects you trust.
 
 ## Accessibility
 
@@ -104,6 +136,7 @@ ChoreCade is allowed to move real mail and real files, so it's careful about it:
 - Every real change is announced through a polite live region, and the ledger is always visible.
 - Skip link, landmarks, visible focus rings, `role="dialog"` with labelled headings on game overlays, `aria-pressed`
   weapon buttons, distinct accessible names on every Play button, and focus returned to the button that opened a game.
+  Esc leaves a game from anywhere, its intro and results cards included.
 - Text colours meet WCAG AA contrast (4.5:1 or better) on the paper and card backgrounds.
 - `prefers-reduced-motion` turns off screen shake, blinking, the guide arrow and most particles.
 - Fonts (Silkscreen and IBM Plex, from Google Fonts) are self-hosted through Fontsource: no third-party requests, and the
@@ -116,7 +149,7 @@ Point ChoreCade at the chores you want. Only those cabinets appear (plus Gmail a
 ```bash
 npm start -- --files ~/Downloads                 # sort a real folder (top-level files only)
 npm start -- --expenses ~/statements/2026.csv    # Date / Description / Amount, or Debit / Credit columns
-npm start -- --lint ~/code/my-app                # uses the project's own ESLint config if it has one
+npm start -- --lint ~/code/my-app                # uses (and runs) the project's own ESLint config: trusted projects only
 npm start -- --mail ~/mail-export                # a folder of .eml files with an INBOX/
 IMAP_PASS='app password' npm start -- --imap-host imap.example.com --imap-user you@example.com
 npm start -- --files ~/Downloads --dry-run       # see what would happen first
@@ -131,7 +164,9 @@ npm start -- --ai
 
 With `--ai`, when the built-in rules can't place a pack of files (`output.dat`, `mystery.xyz`) or recognise a merchant
 (`TST* MYSTERY NOODLE BAR`), Claude (`claude-opus-5-5`, structured output) suggests the bin or category the game
-highlights. Claude only suggests; you still make every move. Only file names, merchant names and counts are sent.
+highlights. Claude only suggests; you still make every move. Only each group's label (a file-name pattern or a merchant
+name), its count and, for merchants, its total are sent: never file contents, email addresses or subjects. Advice is
+cached, so a rescan doesn't ask again.
 
 ## How it works
 
@@ -186,7 +221,7 @@ public/
   games/                 invaders, frenzy, receipts, dungeon, calm mode, shared kit
   games/arena.js, platformer.js, encounter.js   DOM-free game logic, unit-tested in Node
 scripts/seed-demo.js     deterministic demo sandbox
-test/                    42 tests: chores, undo, server guards, Google (fake API), game logic, advisor
+test/                    108 tests: chores, undo, server guards, Google (fake API), game logic, advisor
 ```
 
 No build step and no front-end framework: plain ES modules and `<canvas>`.
@@ -197,8 +232,8 @@ No build step and no front-end framework: plain ES modules and `<canvas>`.
 | --- | --- |
 | Problem statement alignment | Every game action is a real chore action (`chores/*/index.js` `apply`), run in the background by `core/queue.js` while you keep playing. Inbox, folder, expenses and lint, the four chores in the brief, locally and on Gmail and Drive. |
 | Security | `core/safety.js` (host, origin and token guards, path containment, symlink refusal), CSP in `server.js`, OAuth with PKCE and state in `google/auth.js`, RAW Sheets writes, no secrets on the command line, append-only journal with conservative undo. |
-| Testing | `npm test`: 42 `node:test` tests covering every chore's apply and undo, the server guards, Google flows against a fake API, the game logic and the advisor. CI on Linux and Windows. |
-| Efficiency | One move handles a whole group; mailbox heads are read 16 KB at a time in batches of 200; Gmail fetches headers only with a concurrency pool; Drive duplicates come from server checksums; no front-end build or framework. |
+| Testing | `npm test`: 108 `node:test` tests covering every chore's apply and undo, the server guards, Google flows against a fake API, the game logic and the advisor. CI on Linux and Windows. |
+| Efficiency | One move handles a whole group; mailbox headers come from the first 16 KB of each message (64 KB if they run long), in batches of 200; Gmail fetches headers only with a concurrency pool; Drive duplicates come from server checksums; no front-end build or framework. |
 | Accessibility | Calm mode for every chore, live announcements, AA contrast, reduced motion, keyboard play throughout; see [Accessibility](#accessibility). |
 | Code quality | One small interface per chore, sources behind providers and stores, pure game logic split from rendering, ESLint clean, no build step. |
 
