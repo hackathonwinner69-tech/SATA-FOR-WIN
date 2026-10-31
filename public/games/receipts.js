@@ -1,14 +1,24 @@
-// Receipt Rush. A lane runner down the checkout aisle. Each merchant arrives as
-// a wave of three gates: ChoreCade's guess, another category, and Flag. Run
-// through one and every charge from that merchant is filed there for real.
-// Shopping carts between waves cost hearts; jumping skips a merchant for later.
-import { Fx, intro, keyboard, loop, makeCanvas, reducedMotion, results, roundRect, truncate } from './kit.js';
-import { gatesFor, laneX, project, runScore } from './lanes.js';
-import { drawSprite } from '../js/sprites.js';
+// Receipt Rush: turn-based encounters in the style of Undertale, with original
+// art. Every merchant is a monster grown from its name. On your turn pick
+// FILE (choose a category), CHECK (look closer), FLAG (mark for review) or
+// SPARE (let it go for now). Your choice is the real action. Then the merchant
+// attacks and you dodge its pattern inside the box with your coin.
+import { Fx, intro, keyboard, loop, makeCanvas, reducedMotion, results, truncate } from './kit.js';
+import { attackLength, checkText, flavour, hits, monsterFor, patternFor, spawnBullets } from './encounter.js';
 import { fmt } from '../js/api.js';
 
-const SPEED0 = 0.32; // depth units per second
-const HEARTS = 3;
+const VW = 320;
+const VH = 240;
+const MAX_HP = 20;
+const BUTTONS = [
+  { id: 'file', label: 'FILE', color: '#17a673' },
+  { id: 'check', label: 'CHECK', color: '#4f7cf0' },
+  { id: 'flag', label: 'FLAG', color: '#e8462b' },
+  { id: 'spare', label: 'SPARE', color: '#f2b632' },
+];
+const TEXT_BOX = { x: 16, y: 124, w: 288, h: 62 };
+const FIGHT_BOX = { x: 105, y: 112, w: 110, h: 80 };
+const lerp = (a, b, t) => a + (b - a) * t;
 
 export default async function play(ctx) {
   const { root, chore, act, setStats, exit, announce } = ctx;
@@ -22,7 +32,6 @@ export default async function play(ctx) {
   const queue = [...scan.groups];
   const cats = chore.actions.filter((a) => a.id.startsWith('cat:'));
   const colorOf = Object.fromEntries(chore.actions.map((a) => [a.id, a.color]));
-  const labelOf = Object.fromEntries(chore.actions.map((a) => [a.id, a.id === 'flag' ? 'Flag' : a.label]));
 
   if (!queue.length) {
     results(root, { title: 'ALL FILED', lines: ['Every transaction in this export already has a category.'], stats: [], onExit: exit });
@@ -31,270 +40,350 @@ export default async function play(ctx) {
 
   await intro(root, {
     title: 'RECEIPT RUSH',
-    story: `${scan.stats.open} unfiled transactions from ${queue.length} merchants. Each merchant is a wave of three checkout gates. Pick a lane and run through its gate: every charge from that merchant is filed there (if you pick nothing, nothing is filed); the categorised CSV, the report and next month's rules rewrite themselves. Dodge the carts between waves.`,
+    story: `${scan.stats.open} unfiled transactions from ${queue.length} merchants block your path, one encounter at a time. On your turn, FILE puts every charge from that merchant under a category, FLAG marks it for review, CHECK looks closer, SPARE lets it go for now. What you choose really happens: the categorised CSV, the report and next month's rules rewrite themselves. Then the merchant strikes back, so dodge with your coin. Run out of budget and the day ends, but everything you filed stays filed.`,
     keys: [
-      ['← →', 'pick a lane (or click one)'],
-      ['↓ / Enter', 'keep the lane you are in'],
-      ['Space', 'jump: skip this merchant for now, or hop a cart'],
-      ['1 … 0', 'file under any category right now'],
-      ['F', 'flag right now'],
+      ['← → ↑ ↓', 'choose, and move your coin when dodging'],
+      ['Z / Enter', 'confirm (or click)'],
+      ['X / Backspace', 'back'],
     ],
+    start: 'BEGIN',
   });
 
-  const geo = () => ({ width: view.w, horizon: view.h * 0.3, bottom: view.h * 0.93 });
-  const runner = { lane: 1, x: 1, jump: 0 };
-  let things = []; // gates and carts: { kind, z, lane, ... }
-  let wave = null; // { group, gates, spawnedAt }
-  let speed = SPEED0;
-  let hearts = HEARTS;
+  let enemy = null; // { group, art, color }
+  let phase = 'text'; // text | menu | pick | dodge
+  let text = '';
+  let shown = 0;
+  let afterText = 'menu';
+  let menuIndex = 0;
+  let pickIndex = 0;
+  let boxT = 0; // 0 = text box, 1 = fight box
+  let dodge = null; // { time, pattern, state, hit, thenNext }
+  let bullets = [];
+  const soul = { x: 160, y: 152, r: 3.5, inv: 0 };
+  let hp = MAX_HP;
   let score = 0;
   let streak = 0;
   let filed = 0;
-  let skipped = 0;
-  let distance = 0;
+  let spared = 0;
   let over = false;
-  let hurt = 0;
-  const tally = {};
+  let hurtFlash = 0;
 
-  function nextWave() {
-    if (!queue.length) return (wave = null);
+  function say(line, then = 'menu') {
+    text = line;
+    shown = 0;
+    afterText = then;
+    phase = 'text';
+    announce(line.replace(/^\* /, ''));
+  }
+
+  function nextEnemy() {
+    if (!queue.length) return finish('ALL CLEAR');
     const group = queue.shift();
-    const gates = gatesFor(group, cats.map((c) => c.id));
-    // A wave only files anything once the player has chosen a lane for it.
-    wave = { group, gates, start: performance.now(), chosen: false };
-    things.push({ kind: 'gates', z: 1, gates, group });
-    // a couple of carts on the run-up to the next wave
-    for (let i = 0; i < Math.min(3, 1 + Math.floor(filed / 6)); i++) {
-      if (Math.random() < 0.7) things.push({ kind: 'cart', z: 1.45 + i * 0.22, lane: Math.floor(Math.random() * 3) });
-    }
-    announce(`${group.label}: ${fmt.money(group.total)}, ${group.count} charges. Gates: ${gates.map((a) => labelOf[a]).join(', ')}.`);
+    enemy = { group, art: monsterFor(group.label), color: colorOf[group.suggestion] ?? '#c9bfae' };
+    menuIndex = 0;
+    const sug = cats.findIndex((c) => c.id === group.suggestion);
+    pickIndex = sug >= 0 ? sug : 0;
+    say(flavour(group));
   }
 
-  function file(action, how = 'gate') {
-    if (!wave) return;
-    const { group } = wave;
+  function startDodge(thenNext) {
+    phase = 'dodge';
+    bullets = [];
+    soul.x = FIGHT_BOX.x + FIGHT_BOX.w / 2;
+    soul.y = FIGHT_BOX.y + FIGHT_BOX.h / 2;
+    dodge = { time: attackLength(enemy.group), pattern: patternFor(enemy.group), state: {}, hit: false, thenNext };
+  }
+
+  function resolve(action) {
+    const { group } = enemy;
     const wise = action === group.suggestion;
-    const fast = performance.now() - wave.start < 4000;
-    streak = wise || fast ? streak + 1 : 0;
-    score += runScore({ count: group.count, wise, fast, streak });
-    filed += group.count;
-    if (action.startsWith('cat:')) tally[action.slice(4)] = (tally[action.slice(4)] ?? 0) + group.total;
-    const g0 = geo();
-    const y = g0.bottom - 60;
-    fx.burst(laneX(runner.lane, y, g0), y, colorOf[action] ?? '#f2b632', 30);
-    fx.float(view.w / 2, view.h * 0.45, `${labelOf[action].toUpperCase()} · ${truncate(group.label, 20)}${wise ? ' ★' : ''}`, wise ? '#f2b632' : '#f4f1ea', 18);
     act(group.id, action).catch(() => {});
-    things = things.filter((t) => t.kind !== 'gates');
-    if (how === 'key') things = things.filter((t) => t.kind !== 'cart' || t.z < 1);
-    speed = SPEED0 + Math.min(0.35, filed * 0.0015 + (scan.groups.length - queue.length) * 0.006);
-    nextWave();
+    filed += group.count;
+    streak = wise ? streak + 1 : 0;
+    score += Math.round((100 + group.count * 5) * (wise ? 2 : 1) * (1 + Math.min(streak, 10) * 0.1));
+    const what = action === 'flag' ? 'flagged for review' : `filed under ${action.slice(4)}`;
+    fx.burst(160, 60, colorOf[action] ?? '#f2b632', 30, 90);
+    say(`* ${group.label} was ${what}. ${group.count} charge${group.count === 1 ? '' : 's'} sorted. It strikes back as it leaves!`, 'dodge-next');
   }
 
-  function skip(reason = 'SKIPPED · BACK OF THE LINE') {
-    if (!wave) return;
-    queue.push(wave.group);
-    skipped++;
-    streak = 0;
-    fx.float(view.w / 2, view.h * 0.45, reason, '#c9bfae', 15);
-    things = things.filter((t) => t.kind !== 'gates');
-    nextWave();
+  function choose() {
+    if (phase === 'menu') {
+      const b = BUTTONS[menuIndex].id;
+      if (b === 'file') phase = 'pick';
+      if (b === 'check') say(checkText(enemy.group), 'dodge-menu');
+      if (b === 'flag') resolve('flag');
+      if (b === 'spare') {
+        queue.push(enemy.group);
+        spared++;
+        streak = 0;
+        say(`* You spared ${enemy.group.label}. It will be back later.`, 'next');
+      }
+    } else if (phase === 'pick') {
+      if (pickIndex === cats.length) phase = 'menu';
+      else resolve(cats[pickIndex].id);
+    } else if (phase === 'text') {
+      if (shown < text.length) shown = text.length;
+      else if (afterText === 'menu') phase = 'menu';
+      else if (afterText === 'next') nextEnemy();
+      else if (afterText === 'dodge-next') startDodge(true);
+      else if (afterText === 'dodge-menu') startDodge(false);
+    }
   }
 
   kb = keyboard((e) => {
     if (over) return;
-    const k = e.key.toLowerCase();
-    if (k === 'arrowleft' || k === 'a') runner.lane = Math.max(0, runner.lane - 1);
-    if (k === 'arrowright' || k === 'd') runner.lane = Math.min(2, runner.lane + 1);
-    if (['arrowleft', 'a', 'arrowright', 'd', 'arrowdown', 's', 'enter'].includes(k) && wave) wave.chosen = true;
-    if ((k === ' ' || k === 'arrowup' || k === 'w') && runner.jump <= 0) runner.jump = 0.75;
-    if (k === 'f') file('flag', 'key');
-    const cat = cats.find((c) => c.key === k);
-    if (cat) file(cat.id, 'key');
+    const k = e.key;
+    if (k === 'z' || k === 'Z' || k === 'Enter' || k === ' ') return choose();
+    if ((k === 'x' || k === 'X' || k === 'Backspace') && phase === 'pick') {
+      phase = 'menu';
+      return;
+    }
+    if (phase === 'menu') {
+      if (k === 'ArrowRight') menuIndex = (menuIndex + 1) % BUTTONS.length;
+      if (k === 'ArrowLeft') menuIndex = (menuIndex + BUTTONS.length - 1) % BUTTONS.length;
+    } else if (phase === 'pick') {
+      const n = cats.length + 1; // categories plus Back
+      if (k === 'ArrowDown') pickIndex = (pickIndex + 1) % n;
+      if (k === 'ArrowUp') pickIndex = (pickIndex + n - 1) % n;
+      if (k === 'ArrowRight') pickIndex = Math.min(n - 1, pickIndex + 5);
+      if (k === 'ArrowLeft') pickIndex = Math.max(0, pickIndex - 5);
+    }
   });
+
+  // Mouse and touch: tap buttons and menu entries.
   canvas.addEventListener('pointerdown', (e) => {
-    runner.lane = Math.max(0, Math.min(2, Math.floor((e.offsetX / view.w) * 3)));
-    if (wave) wave.chosen = true;
+    const scale = Math.min(view.w / VW, view.h / VH);
+    const x = (e.offsetX - (view.w - VW * scale) / 2) / scale;
+    const y = (e.offsetY - (view.h - VH * scale) / 2) / scale;
+    if (phase === 'menu' && y > 210) {
+      const i = Math.floor((x - 16) / 72);
+      if (i >= 0 && i < BUTTONS.length) {
+        menuIndex = i;
+        choose();
+      }
+    } else if (phase === 'pick' && y > TEXT_BOX.y && y < TEXT_BOX.y + TEXT_BOX.h) {
+      const col = x > 160 ? 1 : 0;
+      const row = Math.floor((y - TEXT_BOX.y - 6) / 10);
+      const i = col * 5 + row;
+      if (row >= 0 && row < 5 && i <= cats.length) {
+        pickIndex = i;
+        choose();
+      }
+    } else if (phase === 'text') choose();
   });
 
   function finish(title) {
+    if (over) return;
     over = true;
     stopLoop();
-    const subs = Object.entries(tally).sort((a, b) => a[1] - b[1]);
     results(root, {
       title,
       lines: [
         `Your categorised CSV, expense-report.md and merchant-rules.json are next to ${chore.target.split(/[/\\]/).pop()}.`,
-        subs.length ? `Biggest spend: ${subs[0][0]} at ${fmt.money(subs[0][1])}.` : '',
-        queue.length || wave ? `${queue.length + (wave ? 1 : 0)} merchants are still waiting; everything you filed stays filed.` : '',
-      ].filter(Boolean),
+        queue.length ? `${queue.length + 1} merchants are still waiting. Everything you filed stays filed.` : 'Every merchant has been dealt with.',
+      ],
       stats: [
         [score.toLocaleString(), 'score'],
-        [filed.toLocaleString(), 'transactions filed'],
-        [String(skipped), 'skipped'],
+        [filed.toLocaleString(), 'transactions sorted'],
+        [String(spared), 'spared'],
+        [`${Math.max(0, hp)}/${MAX_HP}`, 'budget left'],
       ],
       onExit: exit,
     });
   }
 
-  nextWave();
+  function wrap(str, width) {
+    const words = str.split(' ');
+    const lines = [];
+    let line = '';
+    for (const w of words) {
+      const next = line ? `${line} ${w}` : w;
+      if (g.measureText(next).width > width && line) {
+        lines.push(line);
+        line = w;
+      } else line = next;
+    }
+    if (line) lines.push(line);
+    return lines.slice(0, 4);
+  }
+
+  nextEnemy();
   stopLoop = loop((dt, t) => {
     if (over) return;
-    const W = view.w;
-    const H = view.h;
-    const G = geo();
-    distance += speed * dt;
-    runner.x += (runner.lane - runner.x) * Math.min(1, dt * 14);
-    runner.jump = Math.max(0, runner.jump - dt);
-    hurt = Math.max(0, hurt - dt);
+    shown = Math.min(text.length, shown + dt * 45);
+    boxT += ((phase === 'dodge' ? 1 : 0) - boxT) * Math.min(1, dt * 10);
+    soul.inv = Math.max(0, soul.inv - dt);
+    hurtFlash = Math.max(0, hurtFlash - dt);
+    const box = {
+      x: lerp(TEXT_BOX.x, FIGHT_BOX.x, boxT),
+      y: lerp(TEXT_BOX.y, FIGHT_BOX.y, boxT),
+      w: lerp(TEXT_BOX.w, FIGHT_BOX.w, boxT),
+      h: lerp(TEXT_BOX.h, FIGHT_BOX.h, boxT),
+    };
 
-    for (const th of things) th.z -= speed * dt;
-    for (const th of [...things]) {
-      if (th.z > 0.04) continue;
-      things = things.filter((x) => x !== th);
-      if (th.kind === 'gates') {
-        if (runner.jump > 0) skip();
-        else if (!wave?.chosen) skip('NO LANE PICKED · NOTHING FILED');
-        else file(th.gates[runner.lane]);
-      } else if (th.kind === 'cart' && th.lane === runner.lane && runner.jump <= 0 && hurt <= 0) {
-        hearts--;
-        hurt = 1;
-        streak = 0;
-        fx.float(W / 2, H * 0.6, 'OOF! CART', '#d93f25', 22);
-        if (hearts <= 0) return finish('CHECKOUT CLOSED');
+    if (phase === 'dodge') {
+      const k = kb.down;
+      const dx = (k.has('ArrowRight') || k.has('d') ? 1 : 0) - (k.has('ArrowLeft') || k.has('a') ? 1 : 0);
+      const dy = (k.has('ArrowDown') || k.has('s') ? 1 : 0) - (k.has('ArrowUp') || k.has('w') ? 1 : 0);
+      const n = Math.hypot(dx, dy) || 1;
+      soul.x = Math.max(box.x + 5, Math.min(box.x + box.w - 5, soul.x + (dx / n) * 110 * dt));
+      soul.y = Math.max(box.y + 5, Math.min(box.y + box.h - 5, soul.y + (dy / n) * 110 * dt));
+      if (boxT > 0.9) bullets.push(...spawnBullets(dodge.pattern, dodge.state, dt, FIGHT_BOX));
+      for (const b of bullets) {
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+        if (soul.inv <= 0 && hits(soul, b)) {
+          hp -= b.r > 6 ? 4 : 2;
+          soul.inv = 1;
+          hurtFlash = 0.25;
+          dodge.hit = true;
+          streak = 0;
+          b.dead = true;
+          if (hp <= 0) return finish('YOU WENT BROKE');
+        }
+      }
+      const margin = 30;
+      bullets = bullets.filter((b) => !b.dead && b.x > FIGHT_BOX.x - margin && b.x < FIGHT_BOX.x + FIGHT_BOX.w + margin && b.y > FIGHT_BOX.y - margin && b.y < FIGHT_BOX.y + FIGHT_BOX.h + margin);
+      dodge.time -= dt;
+      if (dodge.time <= 0) {
+        bullets = [];
+        if (!dodge.hit) {
+          score += 150;
+          fx.float(160, 100, 'FLAWLESS +150', '#f2b632', 10);
+        }
+        if (dodge.thenNext) nextEnemy();
+        else say(`* ${enemy.group.label} is waiting for your decision.`, 'menu');
       }
     }
-    if (!wave && !things.some((x) => x.kind === 'gates')) return finish('BOOKS BALANCED');
     fx.step(dt);
 
     // ---------- draw ----------
-    g.fillStyle = '#15141b';
+    const W = view.w;
+    const H = view.h;
+    const scale = Math.min(W / VW, H / VH);
+    g.fillStyle = '#000';
     g.fillRect(0, 0, W, H);
-    // store sign on the horizon
-    g.fillStyle = '#22202b';
-    g.fillRect(0, 0, W, G.horizon);
-    g.fillStyle = '#f2b632';
-    g.font = `700 ${Math.min(22, W / 30)}px Silkscreen, monospace`;
-    g.textAlign = 'center';
-    g.fillText('CHECKOUT', W / 2, G.horizon - 12);
-    // road
-    g.fillStyle = '#e8dfcf';
-    g.beginPath();
-    g.moveTo(laneX(-0.5, G.horizon, G), G.horizon);
-    g.lineTo(laneX(2.5, G.horizon, G), G.horizon);
-    g.lineTo(laneX(2.5, H, G), H);
-    g.lineTo(laneX(-0.5, H, G), H);
-    g.fill();
-    // moving floor tiles
-    g.fillStyle = '#d6cbb6';
-    for (let i = 0; i < 14; i++) {
-      const z = 1 - ((i / 14 + distance * 2) % 1);
-      const a = project(z, G);
-      const b = project(z - 0.035, G);
-      g.fillRect(laneX(-0.5, a.y, G), a.y, laneX(2.5, a.y, G) - laneX(-0.5, a.y, G), Math.max(1, b.y - a.y));
-    }
-    // lane lines
-    g.strokeStyle = '#1d1b16';
-    g.lineWidth = 2;
-    for (const l of [0.5, 1.5]) {
-      g.beginPath();
-      g.moveTo(laneX(l, G.horizon, G), G.horizon);
-      g.lineTo(laneX(l, H, G), H);
-      g.stroke();
-    }
+    g.save();
+    g.translate((W - VW * scale) / 2, (H - VH * scale) / 2);
+    g.scale(scale, scale);
 
-    // far things first
-    for (const th of [...things].sort((a, b) => b.z - a.z)) {
-      if (th.z > 1) continue;
-      const { y, s } = project(th.z, G);
-      if (th.kind === 'cart') {
-        const x = laneX(th.lane, y, G);
-        const w = 70 * s;
-        g.fillStyle = '#d93f25';
-        roundRect(g, x - w / 2, y - w * 0.8, w, w * 0.6, 4 * s);
-        g.fill();
-        g.strokeStyle = '#1d1b16';
-        g.lineWidth = Math.max(1, 3 * s);
-        g.stroke();
-        g.fillStyle = '#1d1b16';
-        g.beginPath();
-        g.arc(x - w * 0.3, y - w * 0.12, 6 * s, 0, 7);
-        g.arc(x + w * 0.3, y - w * 0.12, 6 * s, 0, 7);
-        g.fill();
-      } else {
-        th.gates.forEach((a, lane) => {
-          const x = laneX(lane, y, G);
-          const w = (W / 3.6) * s;
-          const h = 90 * s;
-          g.fillStyle = colorOf[a] ?? '#6b665c';
-          g.fillRect(x - w / 2, y - h, w, h * 0.42);
-          g.fillRect(x - w / 2, y - h, w * 0.08, h);
-          g.fillRect(x + w / 2 - w * 0.08, y - h, w * 0.08, h);
-          g.strokeStyle = '#1d1b16';
-          g.lineWidth = Math.max(1, 3 * s);
-          g.strokeRect(x - w / 2, y - h, w, h * 0.42);
-          g.fillStyle = '#fffdf8';
-          const size = Math.max(8, 18 * s);
-          g.font = `700 ${size}px Silkscreen, monospace`;
-          g.fillText(labelOf[a].toUpperCase(), x, y - h + h * 0.3);
-          if (a === th.group.suggestion && s > 0.35) {
-            g.fillStyle = '#f2b632';
-            g.font = `700 ${Math.max(8, 13 * s)}px Silkscreen, monospace`;
-            g.fillText(th.group.aiSuggested ? '★ CLAUDE' : '★ GUESS', x, y - h - 6 * s);
+    // the merchant: name, total and its monster
+    if (enemy) {
+      const { group, art } = enemy;
+      g.textAlign = 'center';
+      g.fillStyle = '#fffdf8';
+      g.font = '700 11px Silkscreen, monospace';
+      g.fillText(truncate(group.label, 28), VW / 2, 16);
+      g.font = '600 9px "IBM Plex Mono", monospace';
+      g.fillStyle = group.total < 0 ? '#ff8a73' : '#7be0b0';
+      g.fillText(`${fmt.money(group.total)} · ${group.count} charge${group.count === 1 ? '' : 's'}`, VW / 2, 28);
+      const px = 5;
+      const bob = reducedMotion ? 0 : Math.sin(t * 2) * 2;
+      const mx = VW / 2 - (art[0].length * px) / 2 + (phase === 'dodge' && !reducedMotion ? Math.sin(t * 9) * 2 : 0);
+      const my = 40 + bob;
+      art.forEach((row, ry) => {
+        [...row].forEach((c, rx) => {
+          if (c === '.') return;
+          g.fillStyle = c === 'e' ? '#fffdf8' : c === 'm' ? '#1d1b16' : enemy.color;
+          g.fillRect(mx + rx * px, my + ry * px, px, px);
+          if (c === 'e') {
+            g.fillStyle = '#1d1b16';
+            g.fillRect(mx + rx * px + 2, my + ry * px + 1, 2, 3);
           }
         });
+      });
+    }
+
+    // the box: text and menus, or the bullet board
+    g.fillStyle = '#000';
+    g.fillRect(box.x, box.y, box.w, box.h);
+    g.strokeStyle = hurtFlash > 0 ? '#e8462b' : '#fffdf8';
+    g.lineWidth = 3;
+    g.strokeRect(box.x, box.y, box.w, box.h);
+    g.textAlign = 'left';
+    g.fillStyle = '#fffdf8';
+    g.font = '600 10px "IBM Plex Mono", monospace';
+    if (phase === 'text' && boxT < 0.1) {
+      wrap(text.slice(0, Math.floor(shown)), TEXT_BOX.w - 20).forEach((line, i) => g.fillText(line, TEXT_BOX.x + 10, TEXT_BOX.y + 16 + i * 13));
+      if (shown >= text.length && Math.floor(t * 3) % 2) g.fillText('▼', TEXT_BOX.x + TEXT_BOX.w - 16, TEXT_BOX.y + TEXT_BOX.h - 8);
+    } else if (phase === 'menu') {
+      wrap(`* What will you do about ${enemy.group.label}?`, TEXT_BOX.w - 20).forEach((line, i) => g.fillText(line, TEXT_BOX.x + 10, TEXT_BOX.y + 16 + i * 13));
+    } else if (phase === 'pick') {
+      g.font = '600 9px "IBM Plex Mono", monospace';
+      [...cats.map((c) => c.label), '← Back'].forEach((label, i) => {
+        const x = TEXT_BOX.x + 18 + Math.floor(i / 5) * 144;
+        const y = TEXT_BOX.y + 13 + (i % 5) * 10;
+        const sel = i === pickIndex;
+        const sug = cats[i]?.id === enemy.group.suggestion;
+        g.fillStyle = sel ? '#f2b632' : sug ? '#7be0b0' : '#fffdf8';
+        g.fillText(`${sel ? '◆ ' : '  '}${label}${sug ? (enemy.group.aiSuggested ? ' ★ Claude' : ' ★') : ''}`, x, y);
+      });
+    }
+    if (phase === 'dodge' && boxT > 0.5) {
+      g.save();
+      g.beginPath();
+      g.rect(box.x + 1.5, box.y + 1.5, box.w - 3, box.h - 3);
+      g.clip();
+      g.textAlign = 'center';
+      for (const b of bullets) {
+        g.fillStyle = b.r > 6 ? '#e8462b' : '#fffdf8';
+        g.font = `700 ${Math.round(b.r * 2.6)}px "IBM Plex Mono", monospace`;
+        g.fillText(b.glyph, b.x, b.y + b.r);
+      }
+      g.restore();
+      // your coin
+      if (!(soul.inv > 0 && !reducedMotion && Math.floor(t * 16) % 2)) {
+        g.fillStyle = '#f2b632';
+        g.beginPath();
+        g.arc(soul.x, soul.y, soul.r + 1, 0, Math.PI * 2);
+        g.fill();
+        g.fillStyle = '#b78a10';
+        g.fillRect(soul.x - 0.5, soul.y - 2.5, 1, 5);
       }
     }
 
-    // runner
-    const ry = G.bottom - 20 - (runner.jump > 0 ? Math.sin((runner.jump / 0.75) * Math.PI) * 70 : 0);
-    const rx = laneX(runner.x, G.bottom, G);
-    if (!(hurt > 0 && !reducedMotion && Math.floor(t * 14) % 2)) drawSprite(g, 'robot', rx - 20, ry - 40, 4, '#12895f');
-    g.fillStyle = 'rgba(0,0,0,0.25)';
-    g.beginPath();
-    g.ellipse(rx, G.bottom + 2, 22, 6, 0, 0, 7);
-    g.fill();
-
-    // the receipt for the current wave
-    if (wave) {
-      const { group } = wave;
-      const w = Math.min(460, W - 32);
-      const x = (W - w) / 2;
-      roundRect(g, x, 12, w, 74, 8);
-      g.fillStyle = '#fffdf8';
-      g.fill();
-      g.strokeStyle = '#1d1b16';
-      g.lineWidth = 3;
-      g.stroke();
-      g.textAlign = 'left';
-      g.fillStyle = '#1d1b16';
-      g.font = '700 18px Silkscreen, monospace';
-      g.fillText(truncate(group.label, 26), x + 14, 38);
-      g.font = '600 13px "IBM Plex Mono", monospace';
-      g.fillStyle = '#57524a';
-      g.fillText(`${group.count} charge${group.count > 1 ? 's' : ''}${group.flags.length ? ' · ' + group.flags.join(' · ') : ''}`, x + 14, 62);
-      g.textAlign = 'right';
-      g.font = '600 22px "IBM Plex Mono", monospace';
-      g.fillStyle = group.total < 0 ? '#d93f25' : '#12895f';
-      g.fillText(fmt.money(group.total), x + w - 14, 40);
+    // budget (HP) and the four buttons
+    g.textAlign = 'left';
+    g.font = '700 9px Silkscreen, monospace';
+    g.fillStyle = '#fffdf8';
+    g.fillText('BUDGET', 16, 204);
+    g.fillStyle = '#c7361d';
+    g.fillRect(64, 196, MAX_HP * 3, 9);
+    g.fillStyle = '#f2b632';
+    g.fillRect(64, 196, Math.max(0, hp) * 3, 9);
+    g.fillStyle = '#fffdf8';
+    g.font = '600 9px "IBM Plex Mono", monospace';
+    g.fillText(`${Math.max(0, hp)} / ${MAX_HP}`, 132, 204);
+    BUTTONS.forEach((b, i) => {
+      const x = 16 + i * 72;
+      const sel = phase === 'menu' && i === menuIndex;
+      g.strokeStyle = sel ? '#f2b632' : b.color;
+      g.lineWidth = 2;
+      g.strokeRect(x, 212, 66, 22);
+      g.fillStyle = sel ? '#f2b632' : b.color;
+      g.font = '700 10px Silkscreen, monospace';
       g.textAlign = 'center';
-    }
-    // hearts
-    for (let i = 0; i < HEARTS; i++) {
-      g.fillStyle = i < hearts ? '#d93f25' : '#3a3744';
-      g.fillRect(16 + i * 22, H - 28, 16, 14);
-    }
+      g.fillText(b.label, x + 36, 227);
+      if (sel) {
+        g.beginPath();
+        g.arc(x + 9, 223, 3.5, 0, Math.PI * 2);
+        g.fill();
+      }
+    });
     fx.draw(g);
+    g.restore();
 
     setStats([
       ['Score', score.toLocaleString()],
       ['Streak', streak > 1 ? `×${streak}` : '-'],
-      ['Merchants left', String(queue.length + (wave ? 1 : 0))],
-      ['Filed', `${filed} / ${scan.stats.open}`],
-      ['Hearts', `${hearts}/${HEARTS}`],
+      ['Merchants left', String(queue.length + (enemy ? 1 : 0))],
+      ['Sorted', `${filed} / ${scan.stats.open}`],
+      ['Budget', `${Math.max(0, hp)}/${MAX_HP}`],
     ]);
   });
 
   return () => {
+    over = true;
     stopLoop();
     kb?.destroy();
     destroyCanvas();

@@ -17,12 +17,12 @@ export const CABINETS = {
   receipts: {
     accent: '#0f7a54',
     module: '/games/receipts.js',
-    what: 'Sprint through the checkout gates. Each gate you take files every charge from one merchant.',
+    what: 'Each merchant is a monster. Choose FILE, FLAG or SPARE on your turn (that choice files its charges for real), then dodge its attack.',
   },
   dungeon: {
     accent: '#9b3d78',
     module: '/games/dungeon.js',
-    what: 'Each lint rule is a boss. Autofix rounds burn away what ESLint can fix, for real.',
+    what: 'A castle crawl: every lint rule is a foe. The Fix Beam runs ESLint’s autofix for real, the whip hushes, the scroll logs.',
   },
 };
 
