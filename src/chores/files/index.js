@@ -2,7 +2,7 @@
 // get dropped into bins. Similar files travel together, exact duplicates are
 // spotted by hash, and "trash" is a folder you can still open.
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { constants, createReadStream } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { dirname, extname, join, resolve } from 'node:path';
 import { assertNotSymlink, assertPlainFile, cleanLine, withinReal } from '../../core/safety.js';
@@ -10,6 +10,8 @@ import { moveAllBack, safeMove } from '../../core/fsx.js';
 
 export const TRASH_DIR = '.chorecade-trash';
 const HASH_LIMIT = 50 * 1024 * 1024;
+const STAT_CONCURRENCY = 64;
+const HASH_CONCURRENCY = 8;
 
 export const BINS = {
   Documents: ['pdf', 'doc', 'docx', 'txt', 'md', 'rtf', 'odt', 'xls', 'xlsx', 'csv', 'ppt', 'pptx', 'pages', 'numbers', 'key', 'epub'],
@@ -47,11 +49,26 @@ export function namePattern(name) {
 function hashFile(path) {
   return new Promise((resolve, reject) => {
     const h = createHash('sha1');
-    createReadStream(path)
+    // O_NOFOLLOW is missing on Windows; there the listing already skipped symlinks.
+    createReadStream(path, { flags: constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) })
       .on('data', (d) => h.update(d))
       .on('end', () => resolve(h.digest('hex')))
       .on('error', reject);
   });
+}
+
+/** `fn` over `items` with at most `limit` calls in flight, results in input order. */
+async function mapLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 /** Label a pack from its first file: "WhatsApp Image 2026-01-11 at 9.10.jpeg" -> "WhatsApp Image at (*.jpeg)" */
@@ -153,19 +170,35 @@ export function localFolderStore(root) {
     await assertNotSymlink(dir);
     return dir;
   }
+  // name -> { size, mtime, hash } from earlier scans, so a rescan re-hashes only what changed.
+  let hashes = new Map();
   return {
     kind: 'local',
     describe: () => root,
     async list() {
-      const files = [];
-      for (const entry of await readdir(root, { withFileTypes: true })) {
-        if (!entry.isFile() || entry.name.startsWith('.')) continue;
-        const path = join(root, entry.name);
-        const info = await stat(path);
-        const file = { id: entry.name, name: entry.name, size: info.size, mtime: info.mtimeMs };
-        if (info.size > 0 && info.size <= HASH_LIMIT) file.hash = await hashFile(path);
-        files.push(file);
+      const names = (await readdir(root, { withFileTypes: true })).filter((e) => e.isFile() && !e.name.startsWith('.')).map((e) => e.name);
+      const files = await mapLimit(names, STAT_CONCURRENCY, async (name) => {
+        const info = await stat(join(root, name));
+        return { id: name, name, size: info.size, mtime: info.mtimeMs };
+      });
+      const sizeCount = new Map();
+      for (const f of files) sizeCount.set(f.size, (sizeCount.get(f.size) ?? 0) + 1);
+      // A file whose size no other file shares cannot be an exact duplicate, so it is never read.
+      const toHash = files.filter((f) => f.size > 0 && f.size <= HASH_LIMIT && sizeCount.get(f.size) > 1);
+      const seen = new Map();
+      for (const f of files) {
+        const cached = hashes.get(f.name);
+        if (cached && cached.size === f.size && cached.mtime === f.mtime) seen.set(f.name, cached);
       }
+      await mapLimit(toHash, HASH_CONCURRENCY, async (f) => {
+        let entry = seen.get(f.name);
+        if (!entry) {
+          entry = { size: f.size, mtime: f.mtime, hash: await hashFile(join(root, f.name)) };
+          seen.set(f.name, entry);
+        }
+        f.hash = entry.hash;
+      });
+      hashes = seen;
       return files;
     },
     /** Move files into `bin` (a folder name), or into the trash folder when bin is null. */

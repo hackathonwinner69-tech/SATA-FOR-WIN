@@ -1,7 +1,7 @@
 // A mailbox kept on disk: one folder per mailbox, one .eml file per message.
 // It is what the demo runs against, and what an exported Takeout/Thunderbird
 // folder of .eml files looks like after unpacking.
-import { constants, open, readdir } from 'node:fs/promises';
+import { constants, lstat, open, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { isoDate, parseHeaders } from './headers.js';
 import { moveAllBack, safeMove } from '../../core/fsx.js';
@@ -26,11 +26,26 @@ async function readHead(path) {
   }
 }
 
+function toMessage(id, head) {
+  const h = parseHeaders(head);
+  return {
+    id,
+    from: h.from ?? '',
+    subject: h.subject ?? '(no subject)',
+    date: isoDate(h.date),
+    seen: /R/.test(h.status ?? ''),
+    listUnsubscribe: h['list-unsubscribe'] ?? null,
+    listUnsubscribePost: h['list-unsubscribe-post'] ?? null,
+  };
+}
+
 export class LocalMailProvider {
   constructor(root, { inbox = 'INBOX', archive = 'Archive', trash = 'Trash' } = {}) {
     this.root = resolve(root);
     this.folders = { inbox, archive, trash };
     this.kind = 'local';
+    // file name -> { size, mtimeMs, message } from the last scan, so a rescan opens only new or changed files.
+    this.cache = new Map();
   }
 
   describe() {
@@ -45,25 +60,24 @@ export class LocalMailProvider {
   async list() {
     const dir = await this.folder('inbox');
     const names = (await readdir(dir, { withFileTypes: true })).filter((d) => d.isFile() && d.name.endsWith('.eml')).map((d) => d.name);
-    const messages = [];
+    const cache = new Map();
+    const read = async (name) => {
+      const path = join(dir, name);
+      // Stat before reading: a write that lands in between changes the mtime, so the next scan reads the file again.
+      const { size, mtimeMs } = await lstat(path);
+      const cached = this.cache.get(name);
+      if (cached?.size === size && cached.mtimeMs === mtimeMs) return cached;
+      return { size, mtimeMs, message: toMessage(name, await readHead(path)) };
+    };
     // Read in modest batches: thousands of parallel opens trips EMFILE on Windows.
     for (let i = 0; i < names.length; i += 200) {
       const batch = names.slice(i, i + 200);
-      const heads = await Promise.all(batch.map((n) => readHead(join(dir, n))));
-      batch.forEach((name, j) => {
-        const h = parseHeaders(heads[j]);
-        messages.push({
-          id: name,
-          from: h.from ?? '',
-          subject: h.subject ?? '(no subject)',
-          date: isoDate(h.date),
-          seen: /R/.test(h.status ?? ''),
-          listUnsubscribe: h['list-unsubscribe'] ?? null,
-          listUnsubscribePost: h['list-unsubscribe-post'] ?? null,
-        });
-      });
+      const entries = await Promise.all(batch.map(read));
+      batch.forEach((name, j) => cache.set(name, entries[j]));
     }
-    return messages;
+    // Messages that left the inbox are dropped here, because only the names listed this time are kept.
+    this.cache = cache;
+    return [...cache.values()].map((e) => ({ ...e.message }));
   }
 
   /** Move messages out of the inbox. Returns what undo needs to put them back. */

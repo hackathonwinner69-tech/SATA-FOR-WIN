@@ -171,6 +171,8 @@ function fakeAuth(fail) {
   const calls = [];
   return {
     calls,
+    now: () => Date.now(),
+    sleep: async () => {},
     async api(url, opts = {}) {
       calls.push({ url, ...opts });
       if (fail(url, opts)) throw Object.assign(new Error('backend error'), { status: 500 });
@@ -179,24 +181,25 @@ function fakeAuth(fail) {
   };
 }
 
-test('Gmail trash: a failure part-way reports only the messages that moved', async () => {
-  const auth = fakeAuth((url) => url.endsWith('/messages/b/trash'));
-  const gmail = new GmailProvider(auth, { concurrency: 1 });
-  const inbox = createInboxChore({ provider: gmail, dataDir: await tempDir(), id: 'gmail' });
-  const err = await inbox.apply(group({ ids: ['a', 'b', 'c'], count: 3 }), 'trash').then(
+test('Gmail trash: a failed batch leaves earlier batches as the partial move', async () => {
+  const ids = Array.from({ length: 1500 }, (_, i) => `m${i}`);
+  const auth = fakeAuth((url, opts) => opts.body?.ids?.[0] === 'm1000');
+  const inbox = createInboxChore({ provider: new GmailProvider(auth), dataDir: await tempDir(), id: 'gmail' });
+  const err = await inbox.apply(group({ ids, count: 1500 }), 'trash').then(
     () => assert.fail('should have failed'),
     (e) => e,
   );
   assert.equal(err.message, 'backend error');
-  assert.equal(err.count, 1);
+  assert.equal(err.count, 1000);
   assert.deepEqual(err.partial, {
-    affected: 1,
-    summary: 'trashed 1 of 3 from Shop News before it failed: backend error',
-    impact: { trashed: 1 },
-    undo: { provider: 'gmail', moved: { target: 'trash', ids: ['a'] } },
+    affected: 1000,
+    summary: 'trashed 1000 of 1500 from Shop News before it failed: backend error',
+    impact: { trashed: 1000 },
+    undo: { provider: 'gmail', moved: { target: 'trash', ids: ids.slice(0, 1000) } },
   });
-  assert.ok(!auth.calls.some((c) => c.url.endsWith('/messages/c/trash')), 'stops sending after a failure');
-  assert.ok(auth.calls.every((c) => c.idempotent === true));
+  assert.equal(auth.calls.length, 2, 'one batchModify per 1000 messages, none after the failure');
+  assert.ok(auth.calls.every((c) => c.idempotent === true && c.url.endsWith('/messages/batchModify')));
+  assert.deepEqual(auth.calls[0].body, { ids: ids.slice(0, 1000), addLabelIds: ['TRASH'], removeLabelIds: ['INBOX'] });
 });
 
 test('Gmail archive: a failed batch leaves earlier batches as the partial move', async () => {

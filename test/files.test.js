@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFilesChore, groupFiles, TRASH_DIR } from '../src/chores/files/index.js';
 import { DriveStore } from '../src/google/drive.js';
+import { reply, signedIn } from './google-fake.js';
 import { createLintChore, QUEST_LOG } from '../src/chores/lint/index.js';
 import { createExpensesChore, readTransactions } from '../src/chores/expenses/index.js';
 import { parseCsv, toCsv } from '../src/chores/expenses/csv.js';
@@ -18,22 +19,16 @@ async function tempDir(t) {
   return dir;
 }
 
-/** A fake Google auth that records every call and fails for the ids in `failing`. */
-function fakeDrive(failing = new Set()) {
-  const calls = [];
-  return {
-    calls,
-    auth: {
-      async api(url, opts = {}) {
-        calls.push({ url, ...opts });
-        if (opts.method === 'PATCH' && failing.has(url.split('/').pop())) throw Object.assign(new Error('backend error'), { status: 500 });
-        if (opts.method === 'POST') return { id: 'bin-new' };
-        if (!opts.method) return { files: [] };
-        return { id: 'x' };
-      },
-    },
-  };
+/** A signed-in fake Drive (see google-fake.js); changing a file in `failing` is refused with HTTP 403. */
+async function fakeDrive(failing = new Set()) {
+  const { auth, google } = await signedIn([
+    ['GET', /drive\/v3\/files\?/, { files: [] }],
+    ['POST', /drive\/v3\/files\?/, { id: 'bin-new' }],
+    ['PATCH', /drive\/v3\/files\/\w+\?/, (url) => (failing.has(/files\/(\w+)\?/.exec(url)[1]) ? reply(403, { error: { code: 403, message: 'backend error' } }) : { id: 'x' })],
+  ]);
+  return { auth, google, calls: google.inner };
 }
+const patched = (calls) => calls.filter((c) => c.method === 'PATCH').map((c) => [/files\/(\w+)\?/.exec(c.url)[1], c.body]).sort();
 
 test('files: a bin or trash folder that is a symlink is refused', posix, async (t) => {
   const dir = await tempDir(t);
@@ -112,42 +107,40 @@ test('files: a move where nothing moved has no partial, so it can be retried', a
   assert.equal(err.partial, undefined);
 });
 
-test('Drive: a move that fails partway reports the moved ids; PATCH is idempotent, folder POST is not', async () => {
-  const google = fakeDrive(new Set(['3']));
-  const drive = new DriveStore(google.auth, { concurrency: 1 });
+test('Drive: a move that fails partway reports the moved ids; the PATCHes go out in one batch', async () => {
+  const google = await fakeDrive(new Set(['3']));
+  const drive = new DriveStore(google.auth);
   const chore = createFilesChore({ store: drive, remote: true });
 
   const err = await chore.apply({ files: ['1', '2', '3', '4'], count: 4 }, 'trash').catch((e) => e);
-  assert.equal(err.message, 'backend error');
-  assert.equal(err.status, 500);
-  assert.equal(err.count, 2);
-  assert.deepEqual(err.moved, { ids: ['1', '2'], trashed: true, where: 'Drive trash' });
-  assert.equal(err.partial.affected, 2);
-  assert.match(err.partial.summary, /^trashed 2 of 4 files into Drive trash before it failed: backend error/);
+  assert.equal(err.message, 'Google API PATCH failed with HTTP 403: backend error');
+  assert.equal(err.status, 403);
+  assert.equal(err.count, 3);
+  assert.deepEqual(err.moved, { ids: ['1', '2', '4'], trashed: true, where: 'Drive trash' });
+  assert.equal(err.partial.affected, 3);
+  assert.match(err.partial.summary, /^trashed 3 of 4 files into Drive trash before it failed: Google API PATCH failed with HTTP 403: backend error/);
   assert.deepEqual(err.partial.undo, err.moved);
-  assert.ok(!google.calls.some((c) => c.url.endsWith('/4')), 'no new requests after the failure');
-  assert.ok(google.calls.filter((c) => c.method === 'PATCH').every((c) => c.idempotent === true));
+  assert.equal(google.google.apiCalls().length, 1, 'one batch request for all four files');
 
   google.calls.length = 0;
   await chore.undo(err.partial.undo);
-  assert.deepEqual(google.calls.map((c) => [c.url.split('/').pop(), c.body]), [['1', { trashed: false }], ['2', { trashed: false }]]);
+  assert.deepEqual(patched(google.calls), [['1', { trashed: false }], ['2', { trashed: false }], ['4', { trashed: false }]]);
 
   const bin = await chore.apply({ files: ['5', '3'], count: 2 }, 'move:Documents').catch((e) => e);
   assert.deepEqual(bin.moved, { ids: ['5'], to: 'bin-new', from: 'root', where: 'Documents/ in Drive' });
-  const post = google.calls.find((c) => c.method === 'POST');
-  assert.ok(post && !post.idempotent, 'creating a folder is never retried blindly');
+  assert.equal(google.google.calls.filter((c) => c.method === 'POST' && /drive\/v3\/files\?/.test(c.url)).length, 1, 'the bin folder is created once');
 });
 
-test('Drive: a move where the first file fails throws the original error', async () => {
-  const drive = new DriveStore(fakeDrive(new Set(['1'])).auth, { concurrency: 1 });
+test('Drive: a move where no file went through throws the original error', async () => {
+  const drive = new DriveStore((await fakeDrive(new Set(['1', '2']))).auth);
   const err = await drive.move(['1', '2'], null).catch((e) => e);
-  assert.equal(err.message, 'backend error');
+  assert.equal(err.message, 'Google API PATCH failed with HTTP 403: backend error');
   assert.equal(err.moved, undefined);
 });
 
 test('Drive: a restore that fails partway says how many went back', async () => {
-  const drive = new DriveStore(fakeDrive(new Set(['2'])).auth, { concurrency: 1 });
-  await assert.rejects(drive.restore({ ids: ['1', '2', '3'], trashed: true }), /put 1 of 3 files back before it failed: backend error/);
+  const drive = new DriveStore((await fakeDrive(new Set(['2']))).auth);
+  await assert.rejects(drive.restore({ ids: ['1', '2', '3'], trashed: true }), /put 2 of 3 files back before it failed: Google API PATCH failed with HTTP 403: backend error/);
 });
 
 test('lint: refuses to write the quest log or a source file through a symlink', posix, async (t) => {
