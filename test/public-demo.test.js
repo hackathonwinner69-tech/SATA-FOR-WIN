@@ -38,3 +38,12 @@ test('a local run stays locked without the terminal link', async () => {
   assert.match(await res.text(), /ChoreCade is locked/);
   await s.close();
 });
+
+test('a local demo opens until a real account is connected', async () => {
+  let remote = false;
+  const s = await serve({ publicDemo: () => !remote });
+  assert.equal((await fetch(`${s.base}/`)).status, 200);
+  remote = true; // e.g. Gmail just got connected
+  assert.equal((await fetch(`${s.base}/`)).status, 401);
+  await s.close();
+});

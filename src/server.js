@@ -59,7 +59,8 @@ export function createServer(arcade, { port, token = randomBytes(24).toString('h
       return res.redirect(303, '/');
     }
     // A public demo (the hosted site) only ever plays a throwaway sandbox, so it opens without the terminal link.
-    if (!publicDemo && !sameToken(readCookie(req, sessionCookie), token)) return res.status(401).type('html').send(lockedPage(port));
+    const open = typeof publicDemo === 'function' ? publicDemo() : publicDemo;
+    if (!open && !sameToken(readCookie(req, sessionCookie), token)) return res.status(401).type('html').send(lockedPage(port));
     const html = await readFile(join(PUBLIC, 'chorecade.html'), 'utf8');
     res.type('html').send(html.replace('__CHORECADE_TOKEN__', token));
   });

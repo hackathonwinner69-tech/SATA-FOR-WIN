@@ -122,6 +122,9 @@ const { app, token } = createServer(arcade, {
   port,
   google: { auth: google, options: { dataDir, dryRun, gmailMax: Number(values['gmail-max']), driveFolder: values['drive-folder'], oneClickUnsubscribe: values['one-click-unsubscribe'] } },
   dropbox: { auth: dropbox, options: { dryRun, folder: values['dropbox-folder'] } },
+  // The demo only plays the throwaway sandbox, so it opens at the bare address too, until a real
+  // Google or Dropbox account is connected: from then on the page needs the terminal link again.
+  publicDemo: () => mode === 'demo' && ![...arcade.chores.values()].some((c) => c.remote),
 });
 
 // Ctrl+C lets queued moves land and logs out of IMAP. A second Ctrl+C, or two seconds, ends it regardless.
