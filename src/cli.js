@@ -4,6 +4,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { Arcade } from './arcade.js';
 import { createServer } from './server.js';
 import { createInboxChore } from './chores/inbox/index.js';
@@ -32,8 +33,8 @@ Targets
 Options
   --dry-run             journal what would happen, change nothing
   --ai                  let Claude suggest bins and categories the built-in rules
-                        cannot (sends file names and merchant names to the
-                        Anthropic API; needs ANTHROPIC_API_KEY or \`ant auth login\`)
+                        cannot (sends file names, merchant names and totals to
+                        the Anthropic API; needs ANTHROPIC_API_KEY or \`ant auth login\`)
   --gmail-max <n>       newest inbox messages to scan once Google is connected (2000)
   --drive-folder <id>   Drive folder to sort once Google is connected (My Drive)
   --one-click-unsubscribe
@@ -43,7 +44,8 @@ Options
 `;
 
 // Settings such as GOOGLE_CLIENT_ID can live in a .env file next to package.json.
-if (existsSync('.env')) process.loadEnvFile('.env');
+const envFile = fileURLToPath(new URL('../.env', import.meta.url));
+if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 const { values } = parseArgs({
   options: {
@@ -77,7 +79,7 @@ const dataDir = resolve('.chorecade');
 const chores = [];
 
 if (live) {
-  if (values.mail) chores.push(createInboxChore({ provider: new LocalMailProvider(resolve(values.mail)), dataDir, dryRun }));
+  if (values.mail) chores.push(createInboxChore({ provider: new LocalMailProvider(resolve(values.mail)), dataDir, dryRun, oneClickUnsubscribe: values['one-click-unsubscribe'] }));
   if (values['imap-host']) {
     if (!process.env.IMAP_PASS) throw new Error('set IMAP_PASS in the environment; passwords never go on the command line');
     const provider = new ImapMailProvider({
@@ -119,16 +121,17 @@ const google = new GoogleAuth({
   tokenFile: join(dataDir, 'google-token.json'),
 });
 await google.load();
-const { app } = createServer(arcade, {
+const { app, token } = createServer(arcade, {
   port,
-  google: { auth: google, options: { dataDir, dryRun, gmailMax: Number(values['gmail-max']), driveFolder: values['drive-folder'] } },
+  google: { auth: google, options: { dataDir, dryRun, gmailMax: Number(values['gmail-max']), driveFolder: values['drive-folder'], oneClickUnsubscribe: values['one-click-unsubscribe'] } },
 });
 
 app.listen(port, '127.0.0.1', () => {
-  console.log(`\nChoreCade (${mode}) at http://localhost:${port}`);
+  console.log(`\nChoreCade (${mode}) at http://localhost:${port}/?token=${token}`);
+  console.log("  Open this link to play. It holds this run's key; the bare address stays locked.");
   for (const c of chores) console.log(`  ${c.title.padEnd(16)} ${c.target}`);
-  const googleState = google.connected ? `signed in as ${google.token.email}` : google.configured ? 'ready, sign in from the arcade' : 'not set up (see README: Google services)';
+  const googleState = google.connected ? `signed in${google.token.email ? ` as ${google.token.email}` : ''}` : google.configured ? 'ready, sign in from the arcade' : 'not set up (see README: Google services)';
   console.log(`\nGoogle: ${googleState}`);
-  if (advisor) console.log('\nClaude advisor on: file and merchant names are sent to the Anthropic API for suggestions.');
+  if (advisor) console.log('\nClaude advisor on: file names, merchant names and merchant totals are sent to the Anthropic API for suggestions.');
   if (mode === 'live') console.log('\nLive mode: moves change real things. Everything is journaled and undoable from the HUD.');
 });

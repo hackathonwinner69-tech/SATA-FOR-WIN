@@ -27,6 +27,7 @@ before(async () => {
   base = `http://127.0.0.1:${port}`;
 });
 after(async () => {
+  server.closeAllConnections();
   server.close();
   await rm(root, { recursive: true, force: true });
 });
@@ -34,9 +35,34 @@ after(async () => {
 const api = (path, opts = {}) =>
   fetch(base + path, { ...opts, headers: { 'content-type': 'application/json', 'x-chorecade-token': token, ...opts.headers } });
 
-test('the page carries the session token', async () => {
-  const html = await (await fetch(base + '/')).text();
-  assert.ok(html.includes(token));
+test('the page and its token are only served after the terminal link is opened', async () => {
+  const locked = await fetch(base + '/');
+  assert.equal(locked.status, 401);
+  assert.ok(!(await locked.text()).includes(token));
+  assert.equal((await fetch(base + '/?token=wrong', { redirect: 'manual' })).status, 401);
+
+  const opened = await fetch(`${base}/?token=${token}`, { redirect: 'manual' });
+  assert.equal(opened.status, 303);
+  const cookie = opened.headers.get('set-cookie');
+  assert.match(cookie, new RegExp(`^chorecade_session_${new URL(base).port}=`));
+  assert.match(cookie, /HttpOnly/i);
+  assert.match(cookie, /SameSite=Lax/i);
+
+  const page = await fetch(base + '/', { headers: { cookie: cookie.split(';')[0] } });
+  assert.equal(page.status, 200);
+  assert.ok((await page.text()).includes(token));
+});
+
+test('only the event stream takes the token in its URL', async () => {
+  assert.equal((await fetch(`${base}/api/state?token=${token}`)).status, 401);
+  const events = await fetch(`${base}/api/events?token=${token}`);
+  assert.equal(events.status, 200);
+  await events.body.cancel();
+});
+
+test('pages are served with a strict content security policy', async () => {
+  const csp = (await fetch(base + '/')).headers.get('content-security-policy');
+  for (const rule of ["default-src 'self'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'", "object-src 'none'"]) assert.ok(csp.includes(rule), rule);
 });
 
 test('API calls without the token are refused', async () => {
