@@ -58,7 +58,7 @@ export function createServer(arcade, { port, token = randomBytes(24).toString('h
       return res.redirect(303, '/');
     }
     if (!sameToken(readCookie(req, sessionCookie), token)) return res.status(401).type('html').send(lockedPage(port));
-    const html = await readFile(join(PUBLIC, 'index.html'), 'utf8');
+    const html = await readFile(join(PUBLIC, 'chorecade.html'), 'utf8');
     res.type('html').send(html.replace('__CHORECADE_TOKEN__', token));
   });
   app.use(express.static(PUBLIC, { index: false }));

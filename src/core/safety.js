@@ -73,6 +73,8 @@ export function mdText(text, max) {
  * page could rebind its own domain to 127.0.0.1 and drive the arcade.
  */
 export function hostGuard(port) {
+  // Deployed on Vercel the Host is the site's own domain, not a loopback one; the per-run token still gates every call.
+  if (process.env.VERCEL) return (req, res, next) => next();
   const allowed = new Set([`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`]);
   return (req, res, next) => {
     if (!allowed.has(req.headers.host)) return res.status(421).send('Misdirected request');
