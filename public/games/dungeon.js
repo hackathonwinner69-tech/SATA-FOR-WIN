@@ -21,10 +21,10 @@ const COLOR = Object.fromEntries(WEAPONS.map((w) => [w.id, w.color]));
 const FLOORS = ['Entrance Hall', 'Clock Corridor', 'Flooded Archive', 'Root Cellar', 'Mirror Gallery', 'Ember Foundry', 'Inner Keep', 'Throne of Warnings'];
 const floorName = (index) => FLOORS[index] ?? `Deep Index ${index - FLOORS.length + 1}`;
 const THEMES = [
-  { wall: '#15141b', brick: '#1c1a24', stone: '#3a3744', edge: '#4a4656', seam: '#2a2833' },
-  { wall: '#101b24', brick: '#152631', stone: '#304754', edge: '#466574', seam: '#223641' },
-  { wall: '#101d21', brick: '#14292b', stone: '#315451', edge: '#47756b', seam: '#223c3a' },
-  { wall: '#1b151e', brick: '#2a1e2b', stone: '#4d3546', edge: '#70506a', seam: '#352738' },
+  { sky: '#0c1020', haze: '#242b50', far: '#1b2140', near: '#24263c', glass: '#45658b', wall: '#15141b', brick: '#1c1a24', stone: '#3a3744', edge: '#4a4656', seam: '#2a2833' },
+  { sky: '#0a1725', haze: '#1e3e53', far: '#143246', near: '#1c3949', glass: '#4e9db1', wall: '#101b24', brick: '#152631', stone: '#304754', edge: '#466574', seam: '#223641' },
+  { sky: '#0b1b20', haze: '#1c4943', far: '#133633', near: '#1c3e3b', glass: '#53aa8b', wall: '#101d21', brick: '#14292b', stone: '#315451', edge: '#47756b', seam: '#223c3a' },
+  { sky: '#171021', haze: '#442345', far: '#321c38', near: '#472945', glass: '#c2788d', wall: '#1b151e', brick: '#2a1e2b', stone: '#4d3546', edge: '#70506a', seam: '#352738' },
 ];
 
 const INK = '#171626';
@@ -145,6 +145,102 @@ function drawGuide(g, x, floor, t) {
   ellipse(g, -8, -26, 1, 1, '#d9ffff'); ellipse(g, 9, -19, 0.8, 0.8, '#d9ffff');
   g.restore();
   g.fillStyle = glow; g.font = '600 5px "IBM Plex Mono", monospace'; g.textAlign = 'center'; g.fillText('LUMA · E', x, y - 34);
+}
+
+function drawBackTower(g, x, baseline, w, h, theme, phase) {
+  const top = baseline - h;
+  const inset = w * 0.2;
+  // A shaded side plane and tapered front give each distant tower a 3D silhouette.
+  g.fillStyle = 'rgba(7,10,20,.62)';
+  g.beginPath(); g.moveTo(x + w * 0.68, top + h * 0.12); g.lineTo(x + w, top + h * 0.2); g.lineTo(x + w, baseline); g.lineTo(x + w * 0.68, baseline - 2); g.closePath(); g.fill();
+  g.fillStyle = theme.far;
+  g.beginPath();
+  g.moveTo(x + inset, baseline); g.lineTo(x + inset, top + h * 0.18);
+  g.lineTo(x + w * 0.5, top); g.lineTo(x + w - inset, top + h * 0.18);
+  g.lineTo(x + w - inset, baseline); g.closePath(); g.fill();
+  g.fillStyle = 'rgba(118,150,195,.12)';
+  g.beginPath(); g.moveTo(x + inset, baseline); g.lineTo(x + inset, top + h * 0.18); g.lineTo(x + w * 0.5, top); g.lineTo(x + w * 0.5, baseline); g.closePath(); g.fill();
+  g.fillStyle = 'rgba(7,10,20,.35)';
+  g.beginPath(); g.moveTo(x + w * 0.5, top); g.lineTo(x + w - inset, top + h * 0.18); g.lineTo(x + w - inset, baseline); g.lineTo(x + w * 0.5, baseline); g.closePath(); g.fill();
+  const windowY = top + h * 0.42;
+  g.fillStyle = theme.glass;
+  for (const wx of [x + w * 0.35, x + w * 0.61]) {
+    g.globalAlpha = 0.45 + Math.sin(phase + wx) * 0.12;
+    g.beginPath(); g.roundRect(wx, windowY, Math.max(2, w * 0.12), h * 0.23, [3, 3, 0, 0]); g.fill();
+  }
+  g.globalAlpha = 1;
+}
+
+function drawParallaxBackground(g, cam, t, theme) {
+  const sky = g.createLinearGradient(0, 0, 0, VH);
+  sky.addColorStop(0, theme.sky); sky.addColorStop(0.68, theme.haze); sky.addColorStop(1, theme.near);
+  g.fillStyle = sky; g.fillRect(0, 0, VW, VH);
+
+  // Slow stars and moonlit mist sit far behind the moving castle.
+  for (let i = 0; i < 30; i++) {
+    const x = ((i * 83 - cam * 0.035) % (VW + 18) + VW + 18) % (VW + 18) - 9;
+    const y = 9 + ((i * 47) % 68);
+    g.globalAlpha = 0.24 + (Math.sin(t * 1.3 + i) + 1) * 0.16;
+    g.fillStyle = '#c9e2ff'; g.fillRect(x, y, i % 5 === 0 ? 1.4 : 0.8, i % 5 === 0 ? 1.4 : 0.8);
+  }
+  g.globalAlpha = 1;
+
+  const ridgeOffset = (cam * 0.1) % 300;
+  g.save(); g.translate(-ridgeOffset, 0);
+  for (let block = -1; block < 3; block++) {
+    const x = block * 300;
+    g.fillStyle = 'rgba(12,18,36,.45)';
+    g.beginPath(); g.moveTo(x, 117); g.lineTo(x + 42, 76); g.lineTo(x + 76, 104); g.lineTo(x + 126, 62); g.lineTo(x + 174, 108); g.lineTo(x + 218, 81); g.lineTo(x + 300, 119); g.lineTo(x + 300, 146); g.lineTo(x, 146); g.closePath(); g.fill();
+    const towers = [[18, 84, 24, 44], [72, 92, 29, 52], [143, 86, 22, 39], [196, 94, 30, 57], [258, 83, 24, 43]];
+    for (let i = 0; i < towers.length; i++) {
+      const [dx, base, w, h] = towers[i];
+      drawBackTower(g, x + dx, base + 40, w, h, theme, t + block + i);
+    }
+    g.fillStyle = 'rgba(137,175,209,.12)';
+    g.beginPath(); g.moveTo(x + 110, 142); g.lineTo(x + 154, 82); g.lineTo(x + 174, 142); g.closePath(); g.fill();
+  }
+  g.restore();
+
+  const masonryOffset = (cam * 0.54) % 32;
+  g.save(); g.translate(-masonryOffset, 0); g.globalAlpha = 0.48; g.fillStyle = theme.brick;
+  for (let y = 103; y < VH; y += 14) {
+    const rowShift = y % 28 ? 16 : 0;
+    for (let x = -40 + rowShift; x < VW + 40; x += 32) g.fillRect(x, y, 30, 12);
+  }
+  g.globalAlpha = 1; g.restore();
+
+  // Mid-depth stained-glass arches slide faster than the skyline.
+  const midOffset = (cam * 0.38) % 184;
+  g.save(); g.translate(-midOffset, 0);
+  for (let x = -184; x < VW + 184; x += 184) {
+    g.fillStyle = 'rgba(11,15,29,.35)'; g.fillRect(x + 22, 31, 29, 103);
+    g.beginPath(); g.arc(x + 36.5, 31, 14.5, Math.PI, 0); g.fill();
+    const glass = g.createLinearGradient(x + 24, 34, x + 48, 118);
+    glass.addColorStop(0, `${theme.glass}88`); glass.addColorStop(1, `${theme.glass}12`);
+    g.fillStyle = glass; g.fillRect(x + 27, 35, 19, 82);
+    g.beginPath(); g.arc(x + 36.5, 35, 9.5, Math.PI, 0); g.fill();
+    g.strokeStyle = 'rgba(215,231,255,.18)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x + 36.5, 27); g.lineTo(x + 36.5, 117); g.moveTo(x + 27, 67); g.lineTo(x + 46, 67); g.stroke();
+    g.fillStyle = 'rgba(197,222,255,.1)'; g.beginPath(); g.moveTo(x + 36, 37); g.lineTo(x + 43, 65); g.lineTo(x + 36, 82); g.lineTo(x + 30, 65); g.closePath(); g.fill();
+  }
+  g.restore();
+
+  // Near stone ribs move at a stronger rate for a clear depth cue as the player runs.
+  const nearOffset = (cam * 0.72) % 128;
+  g.save(); g.translate(-nearOffset, 0);
+  for (let x = -128; x < VW + 128; x += 128) {
+    const rib = g.createLinearGradient(x + 2, 0, x + 15, 0);
+    rib.addColorStop(0, 'rgba(7,9,18,.06)'); rib.addColorStop(0.55, 'rgba(74,82,111,.3)'); rib.addColorStop(1, 'rgba(6,8,16,.48)');
+    g.fillStyle = rib; g.fillRect(x + 4, 20, 13, 127);
+    g.fillStyle = 'rgba(167,184,216,.12)'; g.fillRect(x + 5, 19, 1, 129);
+    g.fillStyle = 'rgba(5,8,17,.35)'; g.fillRect(x - 1, 23, 23, 3); g.fillRect(x - 1, 143, 23, 4);
+  }
+  g.restore();
+
+  // Warm reflected light gives the lower wall a little atmospheric depth.
+  const glow = g.createRadialGradient(VW * 0.5, 135, 4, VW * 0.5, 135, 170);
+  glow.addColorStop(0, 'rgba(255,205,141,.09)'); glow.addColorStop(1, 'rgba(255,205,141,0)');
+  g.fillStyle = glow; g.fillRect(0, 75, VW, VH - 75);
 }
 
 async function loadDungeonStyles() {
@@ -566,19 +662,8 @@ export default async function play(ctx) {
     g.beginPath();
     g.rect(0, 0, VW, VH);
     g.clip();
-    // back wall: parallax bricks and tall windows
-    g.fillStyle = theme.wall;
-    g.fillRect(0, 0, VW, VH);
-    g.fillStyle = theme.brick;
-    const par = cam * 0.5;
-    for (let y = 0; y < VH; y += 12) for (let x = -((par + (y / 12) * 8) % 32); x < VW; x += 32) g.fillRect(x, y, 30, 10);
-    g.fillStyle = '#26233a';
-    for (let x = -(par % 120); x < VW; x += 120) {
-      g.fillRect(x + 40, 26, 16, 44);
-      g.beginPath();
-      g.arc(x + 48, 26, 8, Math.PI, 0);
-      g.fill();
-    }
+    // Layered sprite-like scenery shifts at several rates to create a 3D parallax view.
+    drawParallaxBackground(g, cam, t, theme);
     g.translate(-Math.round(cam), 0);
     // tiles
     const tx0 = Math.floor(cam / TILE);
