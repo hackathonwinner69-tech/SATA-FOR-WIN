@@ -347,7 +347,7 @@ export default async function play(ctx) {
     const remainingGroups = scan.groups.filter((gr) => !shelved.has(gr.rule));
     if (!remainingGroups.length) return finish();
     const groups = remainingGroups.slice(0, 2);
-    level = buildLevel(groups, `floor${floor}`);
+    level = buildLevel(groups, `floor${floor}`, floor);
     foes = level.foes.map((f) => {
       const hpMax = bossHp(f.group.count);
       const bossBonus = f.kind === 'boss' ? Math.min(2, Math.floor(slain / 3)) : 0;
@@ -816,19 +816,41 @@ export default async function play(ctx) {
     g.fillText(doorOpen ? 'EXIT OPEN · KEEP GOING →' : `${WEAPONS.find((item) => item.id === weapon)?.label.toUpperCase()} · ${foes.length} FOE${foes.length === 1 ? '' : 'S'} LEFT`, ox + VW * scale / 2, oy + 28);
     const mw = 10;
     const mx = ox + VW * scale - level.sections * (mw + 2) - 10;
-    g.fillStyle = 'rgba(15,17,28,.72)'; g.beginPath(); g.roundRect(mx - 5, oy + 6, level.sections * (mw + 2) + 10, 26, 6); g.fill();
+    g.fillStyle = 'rgba(15,17,28,.82)'; g.beginPath(); g.roundRect(mx - 5, oy + 6, level.sections * (mw + 2) + 10, 34, 6); g.fill();
     for (let s = 0; s < level.sections; s++) {
       const here = Math.floor(player.x / (SECTION * TILE)) === s;
-      const left = foes.some((f) => f.section === s);
-      g.fillStyle = here ? '#f2b632' : seen.has(s) ? '#4f7cf0' : '#2a2833';
-      g.fillRect(mx + s * (mw + 2), oy + 10, mw, 7);
-      if (left) {
-        g.fillStyle = '#c7361d';
-        g.fillRect(mx + s * (mw + 2) + 4, oy + 12, 2, 3);
+      const explored = seen.has(s) || here;
+      const sx = mx + s * (mw + 2);
+      const sectionStart = s * SECTION;
+      g.fillStyle = explored ? '#565263' : '#2a2833';
+      g.fillRect(sx, oy + 31, mw, 3);
+      if (explored) {
+        // A tiny top-down slice of the actual tile layout makes each wing's
+        // stairs, ledges, and floor breaks visible as the player explores.
+        for (let col = 0; col < mw; col++) {
+          const tx = Math.min(level.w - 1, sectionStart + Math.floor((col / mw) * SECTION));
+          let surface = GROUND;
+          for (let ty = 2; ty < GROUND; ty++) {
+            if (level.solid[ty * level.w + tx]) { surface = ty; break; }
+          }
+          const blockY = oy + 31 - (GROUND - surface) * 2;
+          g.fillStyle = here ? '#d7b46b' : '#7188b8';
+          g.fillRect(sx + col, blockY, 1, oy + 34 - blockY);
+        }
+        if (foes.some((foe) => foe.section === s)) {
+          g.fillStyle = '#ff6b5e';
+          g.fillRect(sx + 4, oy + 24, 2, 3);
+        }
+        if (sigils.some((sigil) => sigil.section === s && !sigil.found)) {
+          g.fillStyle = '#50d5e8';
+          g.fillRect(sx + 4, oy + 20, 2, 2);
+        }
       }
-      if (sigils.some((sigil) => sigil.section === s && !sigil.found)) {
-        g.fillStyle = '#50d5e8';
-        g.fillRect(mx + s * (mw + 2) + 4, oy + 20, 2, 2);
+      if (here) {
+        const within = (player.x / TILE) % SECTION;
+        const markerX = sx + Math.min(mw - 1, Math.floor((within / SECTION) * mw));
+        g.fillStyle = '#f2b632';
+        g.beginPath(); g.moveTo(markerX + 1, oy + 12); g.lineTo(markerX - 1, oy + 9); g.lineTo(markerX + 3, oy + 9); g.closePath(); g.fill();
       }
     }
 

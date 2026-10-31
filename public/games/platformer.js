@@ -32,10 +32,10 @@ export function foeKind(group) {
 
 /**
  * Lay out a floor: one section per two rules plus a starting room and an exit
- * room. Pits are at most three tiles wide and platforms at most three tiles up,
- * so every part is reachable with one jump.
+ * room. Each named wing gets a distinct silhouette, with short stairs and
+ * ledges kept within a comfortable jump of the main route.
  */
-export function buildLevel(groups, seedText = '') {
+export function buildLevel(groups, seedText = '', floorIndex = 0) {
   const rand = rng(seedText + groups.map((g) => g.id).join());
   const sections = Math.max(2, Math.ceil(groups.length / 2)) + 2;
   const w = sections * SECTION;
@@ -52,21 +52,28 @@ export function buildLevel(groups, seedText = '') {
   const foes = [];
   const candles = [];
   const pits = [];
+  const wingLayouts = [
+    { ledges: [[3, 6, 5], [13, 5, 4]], pits: [[9, 2]] }, // Entrance Hall: broken entry bridge
+    { ledges: [[2, 7, 4], [7, 6, 4], [12, 5, 4], [16, 6, 2]], pits: [] }, // Clock Corridor: rising gears
+    { ledges: [[2, 6, 5], [8, 7, 4], [14, 6, 4]], pits: [[10, 2]] }, // Flooded Archive: stepping islands
+    { ledges: [[2, 7, 4], [6, 6, 4], [11, 7, 4], [15, 6, 3]], pits: [[9, 2]] }, // Root Cellar: root stairs
+    { ledges: [[3, 5, 4], [7, 7, 6], [13, 5, 4]], pits: [] }, // Mirror Gallery: high side balconies
+    { ledges: [[2, 7, 4], [6, 6, 4], [10, 5, 4], [15, 6, 3]], pits: [[13, 2]] }, // Ember Foundry: stepped furnace
+    { ledges: [[2, 6, 6], [12, 6, 5]], pits: [[9, 2]] }, // Inner Keep: guarded bridge
+    { ledges: [[3, 5, 3], [8, 7, 4], [14, 5, 3]], pits: [] }, // Throne: open boss arena
+  ];
+  const layout = wingLayouts[((floorIndex % wingLayouts.length) + wingLayouts.length) % wingLayouts.length];
   for (let s = 1; s < sections - 1; s++) {
     const x0 = s * SECTION;
-    if (rand() < 0.55) {
-      const px = x0 + 6 + Math.floor(rand() * 8);
-      const pw = 2 + Math.floor(rand() * 2);
-      for (let x = px; x < px + pw; x++) for (let y = GROUND; y < ROWS; y++) solid[y * w + x] = 0;
-      pits.push({ x: px, w: pw });
+    for (const [offset, width] of layout.pits) {
+      const px = x0 + offset;
+      for (let x = px; x < px + width; x++) for (let y = GROUND; y < ROWS; y++) solid[y * w + x] = 0;
+      pits.push({ x: px, w: width });
     }
-    const platforms = 1 + Math.floor(rand() * 2);
-    for (let p = 0; p < platforms; p++) {
-      const len = 3 + Math.floor(rand() * 4);
-      const px = x0 + 2 + Math.floor(rand() * (SECTION - len - 3));
-      const py = p === 0 ? GROUND - 3 : GROUND - 5; // three tiles up, then two more
-      for (let x = px; x < px + len; x++) set(x, py);
-      if (rand() < 0.5) candles.push({ x: (px + Math.floor(len / 2)) * TILE + 4, y: (py - 1) * TILE });
+    for (const [offset, row, length] of layout.ledges) {
+      const px = x0 + offset;
+      for (let x = px; x < px + length; x++) set(x, row);
+      if (rand() < 0.55) candles.push({ x: (px + Math.floor(length / 2)) * TILE + 4, y: (row - 1) * TILE });
     }
     candles.push({ x: (x0 + 2) * TILE + 4, y: (GROUND - 1) * TILE });
     for (const group of groups.slice((s - 1) * 2, (s - 1) * 2 + 2)) {
