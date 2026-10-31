@@ -1,0 +1,30 @@
+{
+  "name": "chorecade",
+  "version": "0.1.0",
+  "description": "An arcade where every move you make executes a real digital chore in the background: inbox triage, folder sorting, expense review and lint fixing.",
+  "type": "module",
+  "main": "src/server.js",
+  "bin": {
+    "chorecade": "src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "demo": "node scripts/seed-demo.js && node src/cli.js",
+    "seed": "node scripts/seed-demo.js",
+    "test": "node --test test/",
+    "lint": "eslint src public scripts test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "express": "^5.1.0",
+    "globals": "^17.0.0"
+  },
+  "optionalDependencies": {
+    "imapflow": "^1.0.0"
+  }
+}
