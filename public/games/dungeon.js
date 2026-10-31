@@ -18,7 +18,14 @@ const WEAPONS = [
   { id: 'log', label: 'Quest Scroll', key: '3', color: '#4f7cf0' },
 ];
 const COLOR = Object.fromEntries(WEAPONS.map((w) => [w.id, w.color]));
-const FLOORS = ['Entrance Hall', 'Clock Corridor', 'Flooded Archive', 'Inner Keep', 'Throne of Warnings'];
+const FLOORS = ['Entrance Hall', 'Clock Corridor', 'Flooded Archive', 'Root Cellar', 'Mirror Gallery', 'Ember Foundry', 'Inner Keep', 'Throne of Warnings'];
+const floorName = (index) => FLOORS[index] ?? `Deep Index ${index - FLOORS.length + 1}`;
+const THEMES = [
+  { wall: '#15141b', brick: '#1c1a24', stone: '#3a3744', edge: '#4a4656', seam: '#2a2833' },
+  { wall: '#101b24', brick: '#152631', stone: '#304754', edge: '#466574', seam: '#223641' },
+  { wall: '#101d21', brick: '#14292b', stone: '#315451', edge: '#47756b', seam: '#223c3a' },
+  { wall: '#1b151e', brick: '#2a1e2b', stone: '#4d3546', edge: '#70506a', seam: '#352738' },
+];
 
 const INK = '#171626';
 const PALETTE = { paper: '#fff8e8', gold: '#ffd166', blue: '#4d75ec', skin: '#f2bd98', mint: '#56d6a4', plum: '#b66bdf' };
@@ -65,6 +72,31 @@ function drawBat(g, x, y, t, tint) {
   g.strokeStyle = '#f5b7e4'; g.lineWidth = 0.7; g.beginPath(); g.moveTo(-1, 5); g.lineTo(0, 7); g.lineTo(1, 5); g.stroke(); g.restore();
 }
 
+function drawWisp(g, x, y, t, tint) {
+  g.save(); g.translate(x + 5, y + 6 + Math.sin(t * 3.2 + x) * 2);
+  g.shadowColor = tint; g.shadowBlur = 9;
+  const gradient = g.createRadialGradient(-1, -2, 1, 0, 0, 7);
+  gradient.addColorStop(0, '#fff8e8'); gradient.addColorStop(0.35, tint); gradient.addColorStop(1, '#543d86');
+  g.fillStyle = gradient; g.beginPath(); g.moveTo(0, -7); g.bezierCurveTo(7, -6, 8, 2, 3, 5); g.lineTo(0, 3); g.lineTo(-3, 6); g.bezierCurveTo(-8, 1, -6, -6, 0, -7); g.fill();
+  g.shadowBlur = 0; ellipse(g, -2, -1, 0.8, 1, '#fff6bf'); ellipse(g, 2, -1, 0.8, 1, '#fff6bf');
+  g.strokeStyle = '#e5ffff'; g.lineWidth = 0.6; g.beginPath(); g.arc(0, 1, 1.7, 0.2, 2.8); g.stroke();
+  ellipse(g, Math.cos(t * 3 + x) * 8, Math.sin(t * 3 + x) * 4, 1, 1, '#c7f5ff');
+  ellipse(g, Math.cos(t * 3 + x + 2) * 9, Math.sin(t * 3 + x + 2) * 5, 0.7, 0.7, '#f9d5ff');
+  g.restore();
+}
+
+function drawSentinel(g, x, y, t, tint, charging = false) {
+  g.save(); g.translate(x + 6, y + 7); ellipse(g, 0, 5, 9, 2, 'rgba(0,0,0,.28)');
+  if (charging) { g.strokeStyle = 'rgba(255,118,94,.8)'; g.lineWidth = 1.5; g.beginPath(); g.arc(0, 0, 12 + Math.sin(t * 24) * 1.5, 0, Math.PI * 2); g.stroke(); }
+  g.fillStyle = '#493645'; g.beginPath(); g.ellipse(0, 0, 8, 6, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = tint; g.beginPath(); g.ellipse(0, -1, 6, 5, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#e8d4a2'; g.beginPath(); g.moveTo(-5, -4); g.lineTo(-8, -8); g.lineTo(-2, -6); g.lineTo(0, -10); g.lineTo(2, -6); g.lineTo(8, -8); g.lineTo(5, -3); g.closePath(); g.fill();
+  g.fillStyle = '#372639'; g.beginPath(); g.roundRect(-4, -3, 8, 3, 1.5); g.fill();
+  ellipse(g, -2, -2, 0.8, 0.9, charging ? '#fff0b3' : '#ff7284'); ellipse(g, 2, -2, 0.8, 0.9, charging ? '#fff0b3' : '#ff7284');
+  g.strokeStyle = '#ebc379'; g.lineWidth = 1; g.beginPath(); g.moveTo(-4, 2); g.lineTo(-7, 5 + Math.sin(t * 12) * 1.2); g.moveTo(4, 2); g.lineTo(7, 5 + Math.sin(t * 12 + 1) * 1.2); g.stroke();
+  g.restore();
+}
+
 function drawBoss(g, x, y, t, tint) {
   g.save(); g.translate(x + 6.5, y + 6); ellipse(g, 0, 6, 9, 2, 'rgba(0,0,0,.3)');
   g.fillStyle = '#41304d'; g.beginPath(); g.roundRect(-8, -2, 16, 8, 4); g.fill();
@@ -89,6 +121,13 @@ function drawHeart(g, x, y) {
   ellipse(g, -1.1, -1.2, 0.8, 0.5, '#ffd7da'); g.restore();
 }
 
+function drawHudHeart(g, x, y, filled) {
+  g.fillStyle = filled ? '#ff637d' : '#43414f';
+  g.beginPath(); g.moveTo(x, y + 2); g.bezierCurveTo(x - 5, y - 2, x - 2, y - 6, x, y - 3.5);
+  g.bezierCurveTo(x + 2, y - 6, x + 5, y - 2, x, y + 2); g.fill();
+  if (filled) { g.fillStyle = '#ffd4db'; g.fillRect(x - 1.3, y - 3.4, 1.2, 1); }
+}
+
 function drawSigil(g, x, y, t) {
   g.save(); g.translate(x + 5, y + 5 + Math.sin(t * 3 + x) * 1.5); g.rotate(t * 0.7); g.shadowColor = '#7ce8ff'; g.shadowBlur = 8;
   g.fillStyle = '#50d5e8'; g.beginPath(); g.moveTo(0, -5); g.lineTo(4, -2); g.lineTo(3, 3); g.lineTo(0, 5); g.lineTo(-3, 3); g.lineTo(-4, -2); g.closePath(); g.fill();
@@ -97,17 +136,31 @@ function drawSigil(g, x, y, t) {
 
 function drawGuide(g, x, floor, t) {
   const y = GROUND * TILE;
-  g.save(); g.translate(x, y + Math.sin(t * 2.3) * 2); g.shadowColor = '#8cf5ef'; g.shadowBlur = 10;
+  const glow = ['#8cf5ef', '#ffe18a', '#d2b7ff', '#ffbba8'][floor % 4];
+  g.save(); g.translate(x, y + Math.sin(t * 2.3) * 2); g.shadowColor = glow; g.shadowBlur = 10;
   ellipse(g, 0, 0, 7, 2, 'rgba(0,0,0,.25)');
   g.fillStyle = '#67d7dc'; g.beginPath(); g.moveTo(-6, -15); g.quadraticCurveTo(-8, -26, 0, -27); g.quadraticCurveTo(8, -26, 6, -15); g.lineTo(7, -4); g.quadraticCurveTo(4, -7, 1, -3); g.quadraticCurveTo(-2, -8, -6, -3); g.closePath(); g.fill();
   g.shadowBlur = 0; ellipse(g, -2, -20, 0.8, 1.4, '#173b54'); ellipse(g, 2, -20, 0.8, 1.4, '#173b54');
   g.strokeStyle = '#d9ffff'; g.lineWidth = 1; g.beginPath(); g.arc(0, -17, 2, 0.2, 2.9); g.stroke();
   ellipse(g, -8, -26, 1, 1, '#d9ffff'); ellipse(g, 9, -19, 0.8, 0.8, '#d9ffff');
   g.restore();
-  g.fillStyle = '#d9ffff'; g.font = '600 5px "IBM Plex Mono", monospace'; g.textAlign = 'center'; g.fillText('LUMA · E', x, y - 34);
+  g.fillStyle = glow; g.font = '600 5px "IBM Plex Mono", monospace'; g.textAlign = 'center'; g.fillText('LUMA · E', x, y - 34);
 }
 
-const SIZE = { crawler: { w: 10, h: 6 }, bat: { w: 12, h: 6 }, boss: { w: 13, h: 11 } };
+async function loadDungeonStyles() {
+  if (document.querySelector('link[data-dungeon-styles]')) return;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = '/css/dungeon.css';
+  link.dataset.dungeonStyles = 'true';
+  await new Promise((resolve) => {
+    link.addEventListener('load', resolve, { once: true });
+    link.addEventListener('error', resolve, { once: true });
+    document.head.append(link);
+  });
+}
+
+const SIZE = { crawler: { w: 10, h: 6 }, bat: { w: 12, h: 6 }, wisp: { w: 10, h: 12 }, sentinel: { w: 12, h: 9 }, boss: { w: 13, h: 11 } };
 
 export default async function play(ctx) {
   const { root, act, setStats, exit, announce, toast } = ctx;
@@ -124,14 +177,22 @@ export default async function play(ctx) {
     return () => destroyCanvas();
   }
 
+  await loadDungeonStyles();
   await intro(root, {
     title: 'LINT DUNGEON',
-    story: `${scan.stats.problems} problems haunt ${scan.stats.files} files. Every foe in this castle is one lint rule; the big ones are bosses. Green foes can be burned away with the Fix Beam, which really runs ESLint's fixer for that rule. Purple ones are immune and need the Hush Whip (a marked disable comment) or the Quest Scroll (written into LINT_QUESTLOG.md). Climb high ledges to find hidden ward sigils and extra hearts. The castle grows more dangerous each floor, and the exit opens when its foes fall.`,
+    story: `${scan.stats.problems} lint findings across ${scan.stats.files} files have become monsters. Clear a short stage of two rules, then explore a new castle wing. Every defeated monster performs the lint action you chose on the real project.`,
+    guide: [
+      { key: '1 + X', label: 'Fix Beam', description: 'Runs ESLint autofix for this rule. Only fixable findings take damage.' },
+      { key: '2 + X', label: 'Hush Whip', description: 'Adds marked eslint-disable comments for the rule in affected files.' },
+      { key: '3 + X', label: 'Quest Scroll', description: 'Records the rule in LINT_QUESTLOG.md without changing source code.' },
+    ],
+    note: 'Each foe is one lint rule. Pick its action before your first hit; switching after a hit restores its health. Review changes in the ledger, where lint actions can be undone.',
+    variant: 'dungeon-guide',
     keys: [
       ['← →', 'run'],
       ['Z / Space / ↑', 'jump (hold for higher)'],
-      ['X / J', 'attack'],
-      ['1 2 3 / C', 'Fix Beam · Hush Whip · Quest Scroll'],
+      ['X / J', 'use selected weapon'],
+      ['1 2 3 / C', 'select a weapon'],
       ['E', 'talk to Luma near the entrance'],
     ],
     start: 'ENTER THE CASTLE',
@@ -164,15 +225,18 @@ export default async function play(ctx) {
   const seen = new Set(); // sections visited, for the minimap
   ctx.onImpact((impact, entry) => entry && landed++);
 
+  let stageTotal = Math.max(1, Math.ceil(scan.groups.length / 2));
+  root.classList.add('dungeon-screen');
   const player = { x: 40, y: 0, w: 8, h: 13, vx: 0, vy: 0, onGround: false, face: 1, coyote: 0, jumpBuf: 0, inv: 0, knock: 0, attackCd: 0, safe: { x: 40, y: 0 }, anim: 0 };
 
   function enterFloor() {
-    const groups = scan.groups.filter((gr) => !shelved.has(gr.rule));
-    if (!groups.length) return finish();
+    const remainingGroups = scan.groups.filter((gr) => !shelved.has(gr.rule));
+    if (!remainingGroups.length) return finish();
+    const groups = remainingGroups.slice(0, 2);
     level = buildLevel(groups, `floor${floor}`);
     foes = level.foes.map((f) => {
       const hpMax = bossHp(f.group.count);
-      return { ...f, ...SIZE[f.kind], vx: f.kind === 'crawler' ? 28 + floor * 5 : 0, vy: 0, baseY: f.y, hp: hpMax, max: hpMax, by: null, flash: 0, immune: 0, phase: Math.random() * 6, hop: Math.max(0.8, 2 - floor * 0.15) };
+      return { ...f, ...SIZE[f.kind], vx: f.kind === 'crawler' ? 28 + floor * 5 : 0, vy: 0, baseY: f.y, hp: hpMax, max: hpMax, by: null, flash: 0, immune: 0, phase: Math.random() * 6, hop: Math.max(0.8, 2 - floor * 0.15), windup: 0, dash: 0, dashDir: 1, cooldown: 1.4 };
     });
     candles = level.candles.map((c) => ({ ...c, w: 4, h: 6, lit: true }));
     pickups = [];
@@ -197,8 +261,8 @@ export default async function play(ctx) {
     player.safe = { x: player.x, y: player.y };
     seen.clear();
     between = false;
-    const name = FLOORS[Math.min(floor, FLOORS.length - 1)];
-    announce(`Floor ${floor + 1}, ${name}: ${foes.length} foes, ${groups.reduce((s, x) => s + x.count, 0)} problems.`);
+    const name = floorName(floor);
+    announce(`Stage ${floor + 1}, ${name}: ${foes.length} foes. Clear this wing to open the next.`);
     fx.float(VW / 2, 50, `FLOOR ${floor + 1}: ${name.toUpperCase()}`, '#f4f1ea', 10);
   }
 
@@ -281,6 +345,7 @@ export default async function play(ctx) {
     if (over) return;
     scan = await ctx.scan();
     floor++;
+    stageTotal = floor + Math.ceil(scan.groups.filter((group) => !shelved.has(group.rule)).length / 2);
     enterFloor();
   }
 
@@ -417,6 +482,34 @@ export default async function play(ctx) {
       } else if (f.kind === 'bat') {
         if (near) f.x += Math.sign(player.x - f.x) * (30 + floor * 5) * dt;
         f.y = f.baseY + Math.sin(t * 2.4 + f.phase) * 18 + (near ? Math.min(30, Math.max(-10, player.y - f.baseY)) * 0.6 : 0);
+      } else if (f.kind === 'wisp') {
+        if (near) f.x += Math.sign(player.x - f.x) * (18 + floor * 3) * dt;
+        f.x = Math.max(TILE, Math.min(level.w * TILE - f.w - TILE, f.x));
+        f.y = f.baseY + Math.sin(t * 2.8 + f.phase) * 22 + (near ? Math.min(38, Math.max(-18, player.y - f.baseY)) * 0.35 : 0);
+      } else if (f.kind === 'sentinel') {
+        f.cooldown = Math.max(0, f.cooldown - dt);
+        f.vy += PHYS.gravity * dt;
+        let dx = 0;
+        if (f.windup > 0) {
+          f.windup -= dt;
+          if (f.windup <= 0) f.dash = 0.42;
+        } else if (f.dash > 0) {
+          dx = f.dashDir * (125 + floor * 7);
+          f.dash -= dt;
+        } else {
+          if (near) dx = Math.sign(player.x - f.x) * (18 + floor * 2);
+          if (near && Math.abs(player.x - f.x) < 132 && f.cooldown <= 0) {
+            f.dashDir = Math.sign(player.x - f.x) || 1;
+            f.windup = 0.55;
+            f.cooldown = 2.1;
+            fx.float(f.x + f.w / 2, f.y - 8, 'CHARGING!', '#ff9b74', 7);
+          }
+        }
+        const m = moveBox(level, f, dx * dt, f.vy * dt);
+        if (m.onGround) f.vy = 0;
+        if (m.hitX) f.dash = 0;
+        f.x = m.x;
+        f.y = m.y;
       } else {
         f.hop -= dt;
         f.vy += PHYS.gravity * dt;
@@ -464,6 +557,7 @@ export default async function play(ctx) {
     const scale = Math.max(1, Math.min(W / VW, H / VH));
     const ox = (W - VW * scale) / 2;
     const oy = (H - VH * scale) / 2;
+    const theme = THEMES[floor % THEMES.length];
     g.fillStyle = '#0e0d13';
     g.fillRect(0, 0, W, H);
     g.save();
@@ -473,9 +567,9 @@ export default async function play(ctx) {
     g.rect(0, 0, VW, VH);
     g.clip();
     // back wall: parallax bricks and tall windows
-    g.fillStyle = '#15141b';
+    g.fillStyle = theme.wall;
     g.fillRect(0, 0, VW, VH);
-    g.fillStyle = '#1c1a24';
+    g.fillStyle = theme.brick;
     const par = cam * 0.5;
     for (let y = 0; y < VH; y += 12) for (let x = -((par + (y / 12) * 8) % 32); x < VW; x += 32) g.fillRect(x, y, 30, 10);
     g.fillStyle = '#26233a';
@@ -493,11 +587,11 @@ export default async function play(ctx) {
         if (!level.solid[ty * level.w + tx]) continue;
         const x = tx * TILE;
         const y = ty * TILE;
-        g.fillStyle = '#3a3744';
+        g.fillStyle = theme.stone;
         g.fillRect(x, y, TILE, TILE);
-        g.fillStyle = '#4a4656';
+        g.fillStyle = theme.edge;
         g.fillRect(x, y, TILE, 2);
-        g.fillStyle = '#2a2833';
+        g.fillStyle = theme.seam;
         g.fillRect(x + (ty % 2 ? 0 : 8), y + 8, 1, 8);
         g.fillRect(x, y + 8, TILE, 1);
       }
@@ -519,6 +613,8 @@ export default async function play(ctx) {
       const tint = f.flash > 0 ? '#fffdf8' : f.immune > 0 ? '#6b665c' : f.group.rule === 'parse-error' ? '#c7361d' : f.group.fixable ? '#17a673' : '#9b3d78';
       if (f.kind === 'crawler') drawCrawler(g, f.x, f.y, t, tint);
       else if (f.kind === 'bat') drawBat(g, f.x, f.y, t, tint);
+      else if (f.kind === 'wisp') drawWisp(g, f.x, f.y, t, tint);
+      else if (f.kind === 'sentinel') drawSentinel(g, f.x, f.y, t, tint, f.windup > 0);
       else drawBoss(g, f.x, f.y, t, tint);
       // HP pips
       for (let i = 0; i < f.max; i++) {
@@ -567,12 +663,17 @@ export default async function play(ctx) {
       g.fillStyle = '#1d1b16';
       g.fillText(label, sx, sy);
     }
-    for (let i = 0; i < MAX_HP; i++) {
-      g.fillStyle = i < hp ? '#c7361d' : '#3a3744';
-      g.fillRect(ox + 10 + i * 16, oy + 10, 12, 10);
-    }
+    g.fillStyle = 'rgba(15,17,28,.88)'; g.beginPath(); g.roundRect(ox + 8, oy + 7, 104, 26, 7); g.fill();
+    g.fillStyle = '#f2ead8'; g.font = '700 7px "IBM Plex Mono", monospace'; g.textAlign = 'left'; g.fillText('HP', ox + 15, oy + 23);
+    for (let i = 0; i < MAX_HP; i++) drawHudHeart(g, ox + 39 + i * 11, oy + 20, i < hp);
+    const titleText = `STAGE ${String(floor + 1).padStart(2, '0')} · ${floorName(floor).toUpperCase()}`;
+    g.fillStyle = 'rgba(15,17,28,.88)'; g.beginPath(); g.roundRect(ox + VW * scale / 2 - 89, oy + 7, 178, 27, 7); g.fill();
+    g.fillStyle = '#fff8e8'; g.font = '700 8px "IBM Plex Mono", monospace'; g.textAlign = 'center'; g.fillText(titleText, ox + VW * scale / 2, oy + 18);
+    g.fillStyle = doorOpen ? '#80d6ff' : COLOR[weapon]; g.font = '600 6px "IBM Plex Mono", monospace';
+    g.fillText(doorOpen ? 'EXIT OPEN · KEEP GOING →' : `${WEAPONS.find((item) => item.id === weapon)?.label.toUpperCase()} · ${foes.length} FOE${foes.length === 1 ? '' : 'S'} LEFT`, ox + VW * scale / 2, oy + 28);
     const mw = 10;
     const mx = ox + VW * scale - level.sections * (mw + 2) - 10;
+    g.fillStyle = 'rgba(15,17,28,.72)'; g.beginPath(); g.roundRect(mx - 5, oy + 6, level.sections * (mw + 2) + 10, 26, 6); g.fill();
     for (let s = 0; s < level.sections; s++) {
       const here = Math.floor(player.x / (SECTION * TILE)) === s;
       const left = foes.some((f) => f.section === s);
@@ -589,7 +690,7 @@ export default async function play(ctx) {
     }
 
     setStats([
-      ['Floor', `${floor + 1} · ${FLOORS[Math.min(floor, FLOORS.length - 1)]}`],
+      ['Floor', `${floor + 1}/${Math.max(stageTotal, floor + 1)} · ${floorName(floor)}`],
       ['Foes left', String(foes.length)],
       ['Beaten', String(slain)],
       ['Fixed for real', String(ctx.impact().fixed ?? 0)],
@@ -602,5 +703,6 @@ export default async function play(ctx) {
     stopLoop();
     kb?.destroy();
     destroyCanvas();
+    root.classList.remove('dungeon-screen');
   };
 }
