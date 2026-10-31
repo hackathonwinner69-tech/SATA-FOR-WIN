@@ -63,7 +63,7 @@ function esc(s) {
 }
 
 function shortPath(p) {
-  const parts = String(p).split(/[\/]/).filter(Boolean);
+  const parts = String(p).split(/[/\\]/).filter(Boolean);
   return parts.length > 3 ? `…/${parts.slice(-3).join('/')}` : p;
 }
 

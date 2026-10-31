@@ -28,7 +28,7 @@ export default async function play(ctx) {
 
   await intro(root, {
     title: 'FOLDER FRENZY',
-    story: `${scan.stats.files} loose files (${fmt.bytes(scan.stats.bytes)}) in ${ctx.chore.target.split(/[\/]/).pop()}. They come down in crates of look-alikes. Steer each crate into a bin before it lands: the files really move there. The glowing bin is ChoreCade's guess. Duplicates are red: send them to Trash, a folder you can still open. A crate you never touch changes nothing.`,
+    story: `${scan.stats.files} loose files (${fmt.bytes(scan.stats.bytes)}) in ${ctx.chore.target.split(/[/\\]/).pop()}. They come down in crates of look-alikes. Steer each crate into a bin before it lands: the files really move there. The glowing bin is ChoreCade's guess. Duplicates are red: send them to Trash, a folder you can still open. A crate you never touch changes nothing.`,
     keys: [
       ['← →', 'steer the crate'],
       ['↓', 'drop faster'],
