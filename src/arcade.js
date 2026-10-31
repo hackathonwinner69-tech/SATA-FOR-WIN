@@ -5,13 +5,14 @@ import { Journal } from './core/journal.js';
 import { JobQueue } from './core/queue.js';
 
 export class Arcade extends EventEmitter {
-  constructor({ chores, journalFile, mode }) {
+  constructor({ chores, journalFile, mode, advisor = null }) {
     super();
     this.setMaxListeners(50);
     this.chores = new Map(chores.map((c) => [c.id, c]));
     this.journal = new Journal(journalFile);
     this.queue = new JobQueue();
     this.mode = mode; // 'demo' | 'live' | 'dry-run'
+    this.advisor = advisor;
     this.scans = new Map(); // chore id -> Map(group id -> group)
     this.impact = Object.fromEntries(chores.map((c) => [c.id, {}]));
     this.queue.on('job', (job) => this.emit('event', { type: 'job', job }));
@@ -26,6 +27,7 @@ export class Arcade extends EventEmitter {
   summary() {
     return {
       mode: this.mode,
+      ai: Boolean(this.advisor),
       chores: [...this.chores.values()].map((c) => ({
         id: c.id,
         title: c.title,
@@ -41,6 +43,7 @@ export class Arcade extends EventEmitter {
   async scan(id) {
     const chore = this.chore(id);
     const result = await chore.scan();
+    if (this.advisor) result.stats.aiAdvised = await this.advisor.advise(chore, result.groups);
     this.scans.set(id, new Map(result.groups.map((g) => [g.id, g])));
     // Ids can be long lists (thousands of message ids); the page does not need them.
     const groups = result.groups.map(({ ids, rows, files, ...g }) => ({ ...g, size: (ids ?? rows ?? files ?? []).length }));

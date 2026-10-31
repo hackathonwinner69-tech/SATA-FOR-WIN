@@ -111,7 +111,7 @@ export default async function play(ctx) {
       <div class="rr-desc">${esc(group.detail)} · ${group.count} transaction${group.count > 1 ? 's' : ''}</div>
       <div class="rr-amount ${group.total >= 0 ? 'in' : 'out'}">${fmt.money(group.total)}</div>
       <div class="rr-flags">${flags}</div>
-      <div class="rr-guess" style="--c:${esc(colorOf[sug] ?? '#94a3b8')}">${sug ? `ChoreCade guesses <b>${esc(sug.slice(4))}</b>${group.remembered ? ' (from your rules)' : ''}` : 'No idea what this is. Your call.'}</div>`;
+      <div class="rr-guess" style="--c:${esc(colorOf[sug] ?? '#94a3b8')}">${sug ? `${group.aiSuggested ? 'Claude suggests' : 'ChoreCade guesses'} <b>${esc(sug === 'flag' ? 'flag for review' : sug.slice(4))}</b>${group.remembered ? ' (from your rules)' : ''}` : 'No idea what this is. Your call.'}</div>`;
   }
 
   function deal() {

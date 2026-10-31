@@ -12,6 +12,7 @@ import { ImapMailProvider } from './chores/inbox/imap-provider.js';
 import { createFilesChore } from './chores/files/index.js';
 import { createExpensesChore } from './chores/expenses/index.js';
 import { createLintChore } from './chores/lint/index.js';
+import { createAdvisor } from './ai/advisor.js';
 
 const HELP = `ChoreCade: play a game, finish a real chore.
 
@@ -29,6 +30,9 @@ Targets
 
 Options
   --dry-run             journal what would happen, change nothing
+  --ai                  let Claude suggest bins and categories the built-in rules
+                        cannot (sends file names and merchant names to the
+                        Anthropic API; needs ANTHROPIC_API_KEY or \`ant auth login\`)
   --one-click-unsubscribe
                         send RFC 8058 one-click unsubscribe requests (live mail only)
   --port <n>            default 4747
@@ -45,6 +49,7 @@ const { values } = parseArgs({
     expenses: { type: 'string' },
     lint: { type: 'string' },
     'dry-run': { type: 'boolean', default: false },
+    ai: { type: 'boolean', default: false },
     'one-click-unsubscribe': { type: 'boolean', default: false },
     port: { type: 'string', default: process.env.PORT ?? '4747' },
     sandbox: { type: 'string', default: 'sandbox' },
@@ -98,11 +103,13 @@ if (live) {
 }
 
 const mode = dryRun ? 'dry-run' : live ? 'live' : 'demo';
-const arcade = new Arcade({ chores, journalFile: join(live ? dataDir : resolve(values.sandbox), 'journal.jsonl'), mode });
+const advisor = values.ai ? createAdvisor() : null;
+const arcade = new Arcade({ chores, journalFile: join(live ? dataDir : resolve(values.sandbox), 'journal.jsonl'), mode, advisor });
 const { app } = createServer(arcade, { port });
 
 app.listen(port, '127.0.0.1', () => {
   console.log(`\nChoreCade (${mode}) at http://localhost:${port}`);
   for (const c of chores) console.log(`  ${c.title.padEnd(16)} ${c.target}`);
+  if (advisor) console.log('\nClaude advisor on: file and merchant names are sent to the Anthropic API for suggestions.');
   if (mode === 'live') console.log('\nLive mode: moves change real things. Everything is journaled and undoable from the HUD.');
 });
